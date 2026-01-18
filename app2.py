@@ -7,73 +7,68 @@ from datetime import datetime
 st.set_page_config(page_title="Gestion Whatnot Duo", layout="wide")
 st.title("💰 Suivi Business Whatnot")
 
-# --- INITIALISATION ---
+# --- INITIALISATION DE LA MÉMOIRE ---
 if 'data' not in st.session_state:
     st.session_state.data = pd.DataFrame(columns=["Date", "Type", "Description", "Montant", "Année"])
 
 # --- BARRE LATÉRALE : SAISIE ---
 st.sidebar.header("📝 Nouvelle Opération")
-annee_actuelle = str(datetime.now().year)
-type_op = st.sidebar.selectbox("Nature", ["Vente (Gain après frais Whatnot)", "Achat Stock (Dépense)"])
+type_op = st.sidebar.selectbox("Nature", ["Vente (Gain net Whatnot)", "Achat Stock (Dépense)"])
 desc = st.sidebar.text_input("Description (ex: Live du 18/01)")
 montant = st.sidebar.number_input("Montant (€)", min_value=0.0, step=1.0)
-date = st.sidebar.date_input("Date", datetime.now())
+date_op = st.sidebar.date_input("Date", datetime.now())
 
 if st.sidebar.button("Enregistrer l'opération"):
-    valeur = montant if type_op.startswith("Vente") else -montant
-    new_row = {"Date": date, "Type": type_op, "Description": desc, "Montant": valeur, "Année": str(date.year)}
-    st.session_state.data = pd.concat([st.session_state.data, pd.DataFrame([new_row])], ignore_index=True)
+    valeur = montant if "Vente" in type_op else -montant
+    new_row = pd.DataFrame([{
+        "Date": pd.to_datetime(date_op), 
+        "Type": type_op, 
+        "Description": desc, 
+        "Montant": valeur, 
+        "Année": str(date_op.year)
+    }])
+    st.session_state.data = pd.concat([st.session_state.data, new_row], ignore_index=True)
     st.sidebar.success("Enregistré !")
 
 # --- FILTRE PAR ANNÉE ---
-annees_dispo = sorted(st.session_state.data["Année"].unique(), reverse=True)
-if not annees_dispo: annees_dispo = [annee_actuelle]
+df = st.session_state.data
+annee_actuelle = str(datetime.now().year)
+
+if not df.empty and "Année" in df.columns:
+    annees_dispo = sorted(df["Année"].unique(), reverse=True)
+else:
+    annees_dispo = [annee_actuelle]
+
 selection_annee = st.selectbox("📅 Choisir l'année à afficher", annees_dispo)
+df_filtre = df[df["Année"] == selection_annee] if not df.empty else df
 
-df_filtre = st.session_state.data[st.session_state.data["Année"] == selection_annee]
+# --- CALCULS ET AFFICHAGE ---
+ca_net = df_filtre[df_filtre["Montant"] > 0]["Montant"].sum() if not df_filtre.empty else 0
+achats = abs(df_filtre[df_filtre["Montant"] < 0]["Montant"].sum()) if not df_filtre.empty else 0
+benefice = ca_net - achats
+impots = ca_net * 0.22 
+net_final = benefice - impots
 
-# --- CALCULS ---
-ca_net_whatnot = df_filtre[df_filtre["Montant"] > 0]["Montant"].sum()
-total_achats = abs(df_filtre[df_filtre["Montant"] < 0]["Montant"].sum())
-benefice_reel = ca_net_whatnot - total_achats
-impots_estimes = ca_net_whatnot * 0.22 # Basé sur le CA encaissé
-net_final = benefice_reel - impots_estimes
-
-# --- AFFICHAGE DES MÉTRIQUES ---
 col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("Chiffre d'Affaires Net Whatnot", f"{ca_net_whatnot:.2f} €")
-with col2:
-    st.metric("Dépenses Stocks", f"-{total_achats:.2f} €", delta_color="inverse")
-with col3:
-    st.metric("Bénéfice Réel (Avant impôts)", f"{benefice_reel:.2f} €")
+col1.metric("CA Net (Whatnot)", f"{ca_net:.2f} €")
+col2.metric("Achats Stock", f"-{achats:.2f} €")
+col3.metric("Bénéfice (Avant impôts)", f"{benefice:.2f} €")
 
 st.divider()
 
-col_tax, col_duo = st.columns(2)
-with col_tax:
-    st.subheader("🏦 Fiscalité")
-    st.warning(f"Impôts estimés (22% du CA) : **{impots_estimes:.2f} €**")
-    st.info(f"Reste après impôts : **{net_final:.2f} €**")
-
-with col_duo:
-    st.subheader("👯 Partage")
-    st.success(f"À reverser à ta collègue (50%) : **{(net_final / 2):.2f} €**")
+c1, c2 = st.columns(2)
+with c1:
+    st.warning(f"🏦 Provision Impôts (22%): **{impots:.2f} €**")
+with c2:
+    st.success(f"👯 Part par personne (50%): **{(net_final/2):.2f} €**")
 
 # --- GRAPHIQUE ---
 if not df_filtre.empty:
     st.subheader(f"📈 Évolution {selection_annee}")
-    fig = px.area(df_filtre.sort_values("Date"), x="Date", y="Montant", title="Flux de trésorerie")
+    df_graph = df_filtre.sort_values("Date")
+    fig = px.line(df_graph, x="Date", y="Montant", title="Flux de trésorerie")
     st.plotly_chart(fig, use_container_width=True)
 
-# --- SCAN ---
-st.divider()
-st.subheader("📸 Scan de Ticket")
-file = st.file_uploader("Prendre en photo un ticket", type=["jpg", "png"])
-if file:
-    st.image(file, width=200)
-    st.info("Ticket enregistré. N'oublie pas de saisir le montant dans 'Achat Stock' pour le déduire du bénéfice.")
-
 # --- HISTORIQUE ---
-st.subheader("📑 Détails des opérations")
+st.subheader("📑 Historique")
 st.dataframe(df_filtre, use_container_width=True)
