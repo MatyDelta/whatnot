@@ -37,25 +37,47 @@ ca_h = df_all[df_all["Montant"] > 0]["Montant"].sum() if not df_all.empty else 0
 achats_h = abs(df_all[df_all["Montant"] < 0]["Montant"].sum()) if not df_all.empty else 0
 benef_h = ca_h - achats_h
 
-# Argent perso (Ventes payées - tous les achats) / 2
+# Argent perso historique (Ventes payées - tous les achats) / 2
 ventes_payees = df_all[(df_all["Montant"] > 0) & (df_all["Payé"] == True)]["Montant"].sum() if not df_all.empty else 0
-argent_perso_actuel = (ventes_payees - achats_h) / 2
+argent_perso_historique = (ventes_payees - achats_h) / 2
+
+# --- CALCULS "EN COURS" (Ce qu'il reste à régulariser) ---
+df_non_paye = df_all[df_all["Payé"] == False] if not df_all.empty else pd.DataFrame()
+ca_en_cours = df_non_paye[df_non_paye["Montant"] > 0]["Montant"].sum() if not df_non_paye.empty else 0
+achats_en_cours = abs(df_non_paye[df_non_paye["Montant"] < 0]["Montant"].sum()) if not df_non_paye.empty else 0
+benef_brut_en_cours = ca_en_cours - achats_en_cours
 
 # --- ORGANISATION EN ONGLETS ---
-tab1, tab2, tab3 = st.tabs(["📊 Vue Globale", "👩‍💻 Compte Julie", "👨‍💻 Compte Mathéo"])
+tab1, tab2, tab3 = st.tabs(["📊 Vue Globale & Régularisation", "👩‍💻 Compte Julie", "👨‍💻 Compte Mathéo"])
 
 with tab1:
-    # --- COMPTEURS ---
+    # --- COMPTEURS DE RÉGULARISATION ---
+    st.subheader("⚠️ À régulariser (Ventes non encore payées)")
     c1, c2, c3 = st.columns(3)
-    c1.metric("Bénéfice Historique", f"{benef_h:.2f} €")
-    c2.metric("Julie (Portefeuille)", f"{argent_perso_actuel:.2f} €")
-    c3.metric("Mathéo (Portefeuille)", f"{argent_perso_actuel:.2f} €")
+    c1.metric("CA en attente", f"{ca_en_cours:.2f} €")
+    c2.metric("Achats à déduire", f"-{achats_en_cours:.2f} €")
+    c3.metric("Bénéfice à partager", f"{benef_brut_en_cours:.2f} €")
     
+    st.divider()
+    
+    # --- SECTION IMPOTS ET DUO ---
+    col_impots, col_duo = st.columns(2)
+    with col_impots:
+        st.subheader("🏦 Section Impôts")
+        total_impots = ca_en_cours * 0.22
+        st.error(f"Provision Impôts (22% du CA) : **{total_impots:.2f} €**")
+        st.caption(f"Soit {total_impots/2:.2f} € chacune à mettre de côté.")
+
+    with col_duo:
+        st.subheader("👯 Reste à payer à Julie")
+        st.success(f"Montant du virement à faire : **{max(0, benef_brut_en_cours/2):.2f} €**")
+        st.caption("Calculé sur le bénéfice brut (Ventes - Achats) / 2.")
+
     st.divider()
     
     # --- GRAPHIQUE GLOBAL ---
     if not df_all.empty:
-        st.subheader("📈 Évolution du Bénéfice Global")
+        st.subheader("📈 Évolution du Bénéfice Global (Historique)")
         df_all['Date'] = pd.to_datetime(df_all['Date'])
         df_global = df_all.sort_values("Date").copy()
         df_global['Cumul'] = df_global['Montant'].cumsum()
@@ -63,7 +85,6 @@ with tab1:
         st.plotly_chart(fig_global, use_container_width=True)
 
     # --- TABLEAU ET MODIFS ---
-    st.divider()
     st.subheader("📑 Historique des transactions")
     edited_df = st.data_editor(
         df_all,
@@ -78,28 +99,23 @@ with tab1:
         st.rerun()
 
 with tab2:
-    st.subheader("💰 Statistiques Personnelles - Julie")
-    st.write(f"Argent disponible : **{argent_perso_actuel:.2f} €**")
+    st.subheader("🏆 Score Julie")
+    st.write(f"Bénéfice total historique encaissé : **{argent_perso_historique:.2f} €**")
     
     if not df_all.empty:
-        # Calcul de l'évolution du compte de Julie
         df_j = df_all.sort_values("Date").copy()
-        # Julie ne gagne que si c'est payé, mais perd dès qu'il y a un achat
         df_j['Gain_J'] = df_j.apply(lambda x: (x['Montant']/2) if (x['Montant'] < 0 or x['Payé'] == True) else 0, axis=1)
         df_j['Cumul_J'] = df_j['Gain_J'].cumsum()
-        
-        fig_j = px.line(df_j, x="Date", y="Cumul_J", title="Ma progression (Julie)", markers=True, color_discrete_sequence=['#FF66C4'])
+        fig_j = px.line(df_j, x="Date", y="Cumul_J", title="Progression de Julie", markers=True, color_discrete_sequence=['#FF66C4'])
         st.plotly_chart(fig_j, use_container_width=True)
 
 with tab3:
-    st.subheader("💰 Statistiques Personnelles - Mathéo")
-    st.write(f"Argent disponible : **{argent_perso_actuel:.2f} €**")
+    st.subheader("🏆 Score Mathéo")
+    st.write(f"Bénéfice total historique encaissé : **{argent_perso_historique:.2f} €**")
     
     if not df_all.empty:
-        # Calcul de l'évolution du compte de Mathéo (même logique)
         df_m = df_all.sort_values("Date").copy()
         df_m['Gain_M'] = df_m.apply(lambda x: (x['Montant']/2) if (x['Montant'] < 0 or x['Payé'] == True) else 0, axis=1)
         df_m['Cumul_M'] = df_m['Gain_M'].cumsum()
-        
-        fig_m = px.line(df_m, x="Date", y="Cumul_M", title="Ma progression (Mathéo)", markers=True, color_discrete_sequence=['#17BECF'])
+        fig_m = px.line(df_m, x="Date", y="Cumul_M", title="Progression de Mathéo", markers=True, color_discrete_sequence=['#17BECF'])
         st.plotly_chart(fig_m, use_container_width=True)
