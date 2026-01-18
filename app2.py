@@ -29,21 +29,14 @@ if st.sidebar.button("Enregistrer"):
         "Payé": False
     }])
     st.session_state.data = pd.concat([st.session_state.data, new_row], ignore_index=True)
-    st.sidebar.success("Opération ajoutée !")
+    st.sidebar.success("Enregistré !")
 
-# --- CALCULS GLOBAUX (DEPUIS LE DÉPART) ---
+# --- CALCULS GLOBAUX ---
 df_all = st.session_state.data
-if not df_all.empty:
-    ca_historique = df_all[df_all["Montant"] > 0]["Montant"].sum()
-    achats_historique = abs(df_all[df_all["Montant"] < 0]["Montant"].sum())
-    impots_historique = ca_historique * 0.22
-    benef_total_depuis_depart = ca_historique - achats_historique - impots_historique
-else:
-    benef_total_depuis_depart = 0
-
-# Affichage du score global tout en haut
-st.metric("🏆 Bénéfice NET cumulé (Depuis le départ)", f"{max(0, benef_total_depuis_depart):.2f} €")
-st.divider()
+ca_h = df_all[df_all["Montant"] > 0]["Montant"].sum() if not df_all.empty else 0
+achats_h = abs(df_all[df_all["Montant"] < 0]["Montant"].sum()) if not df_all.empty else 0
+impots_h = ca_h * 0.22
+benef_historique = ca_h - achats_h - impots_h
 
 # --- FILTRE PAR ANNÉE ---
 annee_actuelle = str(datetime.now().year)
@@ -51,53 +44,43 @@ liste_annees = sorted(df_all["Année"].unique(), reverse=True) if not df_all.emp
 selection_annee = st.selectbox("📅 Consulter l'année :", liste_annees)
 df_filtre = df_all[df_all["Année"] == selection_annee].copy() if not df_all.empty else df_all
 
-# --- CALCULS DU RESTE À PAYER (REMISE À ZÉRO DYNAMIQUE) ---
-if not df_filtre.empty:
-    # On ne calcule le "Reste à payer" que sur les lignes NON PAYÉES
-    df_non_paye = df_filtre[df_filtre["Payé"] == False]
-    
-    ca_en_attente = df_non_paye[df_non_paye["Montant"] > 0]["Montant"].sum()
-    achats_en_attente = abs(df_non_paye[df_non_paye["Montant"] < 0]["Montant"].sum())
-    impots_en_attente = ca_en_attente * 0.22
-    
-    # Le bénéfice net qui reste à diviser
-    benefice_net_en_attente = ca_en_attente - achats_en_attente - impots_en_attente
-    part_collegue = benefice_net_en_attente / 2
-else:
-    benefice_net_en_attente = 0
-    part_collegue = 0
+# --- CALCULS "EN COURS" (REMISE À ZÉRO) ---
+df_non_paye = df_filtre[df_filtre["Payé"] == False] if not df_filtre.empty else pd.DataFrame()
+ca_en_cours = df_non_paye[df_non_paye["Montant"] > 0]["Montant"].sum() if not df_non_paye.empty else 0
+achats_en_cours = abs(df_non_paye[df_non_paye["Montant"] < 0]["Montant"].sum()) if not df_non_paye.empty else 0
+impots_en_cours = ca_en_cours * 0.22
+benef_net_en_cours = ca_en_cours - achats_en_cours - impots_en_cours
 
-# --- AFFICHAGE DES CHIFFRES "EN COURS" ---
-st.subheader(f"📊 Situation actuelle ({selection_annee})")
-c1, c2 = st.columns(2)
+# --- AFFICHAGE ---
+# 1. Les 3 colonnes classiques
+c1, c2, c3 = st.columns(3)
+c1.metric("CA Net (Ventes)", f"{ca_en_cours:.2f} €")
+c2.metric("Achats Stock", f"-{achats_en_cours:.2f} €")
+c3.metric("Bénéfice NET en cours", f"{max(0, benef_net_en_cours):.2f} €")
 
-with c1:
-    st.info(f"💰 Bénéfice NET en attente de partage : **{max(0, benefice_net_en_attente):.2f} €**")
-    st.caption("Ceci est le bénéfice après retrait des achats et impôts non encore régularisés.")
+# 2. La nouvelle ligne pour l'historique et le partage
+st.divider()
+col_hist, col_paye = st.columns(2)
+with col_hist:
+    st.subheader("🏆 Score Global")
+    st.write(f"Bénéfice NET cumulé (Depuis le départ) : **{max(0, benef_historique):.2f} €**")
 
-with c2:
-    st.success(f"👯 Reste à verser à ma collègue : **{max(0, part_collegue):.2f} €**")
-    st.caption("Dès que vous cochez 'Payé' dans le tableau, ce montant revient à 0.")
+with col_paye:
+    st.subheader("👯 Partage")
+    st.success(f"Reste à verser à ma collègue : **{(max(0, benef_net_en_cours)/2):.2f} €**")
 
-# --- HISTORIQUE ET VALIDATION ---
+# --- HISTORIQUE ---
 st.divider()
 st.subheader("📑 Détails des transactions")
 if not df_filtre.empty:
     edited_df = st.data_editor(
         df_filtre,
-        column_config={
-            "Payé": st.column_config.CheckboxColumn("💰 Remboursé / Payé ?"),
-            "Année": None,
-            "Montant": st.column_config.NumberColumn("Montant (€)", format="%.2f")
-        },
+        column_config={"Payé": st.column_config.CheckboxColumn("Remboursé / Payé ?"), "Année": None},
         num_rows="dynamic",
         use_container_width=True,
         hide_index=True
     )
-    
-    if st.button("Sauvegarder et Mettre à jour les calculs"):
+    if st.button("Sauvegarder les changements"):
         autres_annees = df_all[df_all["Année"] != selection_annee]
         st.session_state.data = pd.concat([autres_annees, edited_df], ignore_index=True)
         st.rerun()
-else:
-    st.write("Aucune donnée pour cette année.")
