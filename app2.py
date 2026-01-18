@@ -115,26 +115,49 @@ with tab1:
         st.rerun()
 
 with tab2:
-    st.subheader("🏆 Score Julie")
+    st.subheader("👩‍💻 Compte Julie")
+    
+    # Argent encaissé (Ventes Payées - Tous les Achats) / 2
     ventes_payees = df_all[(df_all["Montant"] > 0) & (df_all["Payé"] == True)]["Montant"].sum() if not df_all.empty else 0
     argent_julie = (ventes_payees - achats_historique) / 2
-    st.write(f"Bénéfice historique encaissé : **{argent_julie:.2f} €**")
+    
+    # Affichage du score en gros
+    st.metric("Bénéfice Net Encaissé (Julie)", f"{argent_julie:.2f} €")
+    
+    st.divider()
     
     if not df_all.empty:
-        df_j = df_all.sort_values("Date").copy()
-        df_j['Gain_J'] = df_j.apply(lambda x: (x['Montant']/2) if (x['Montant'] < 0 or x['Payé'] == True) else 0, axis=1)
-        df_j['Cumul_J'] = df_j['Gain_J'].cumsum()
-        fig_j = px.line(df_j, x="Date", y="Cumul_J", title="Progression de Julie", markers=True, color_discrete_sequence=['#FF66C4'])
-        st.plotly_chart(fig_j, use_container_width=True)
+        # Création du tableau spécifique à Julie
+        df_j = df_all.sort_values("Date", ascending=False).copy()
+        # Calcul de sa part sur chaque ligne : 50% du montant si payé ou si c'est une dépense
+        df_j['Ma Part (50%)'] = df_j.apply(lambda x: (x['Montant']/2) if (x['Payé'] == True or x['Montant'] < 0) else 0, axis=1)
+        
+        st.write("### 📜 Détail de mes gains")
+        # On affiche seulement les colonnes utiles pour elle
+        st.dataframe(
+            df_j[df_j['Ma Part (50%)'] != 0][["Date", "Description", "Montant", "Ma Part (50%)"]],
+            use_container_width=True,
+            hide_index=True
+        )
 
 with tab3:
-    st.subheader("🏆 Score Mathéo")
+    st.subheader("👨‍💻 Compte Mathéo")
+    
+    # Même calcul pour Mathéo
     argent_matheo = (ventes_payees - achats_historique) / 2
-    st.write(f"Bénéfice historique encaissé : **{argent_matheo:.2f} €**")
+    
+    st.metric("Bénéfice Net Encaissé (Mathéo)", f"{argent_matheo:.2f} €")
+    
+    st.divider()
     
     if not df_all.empty:
-        df_m = df_all.sort_values("Date").copy()
-        df_m['Gain_M'] = df_m.apply(lambda x: (x['Montant']/2) if (x['Montant'] < 0 or x['Payé'] == True) else 0, axis=1)
-        df_m['Cumul_M'] = df_m['Gain_M'].cumsum()
-        fig_m = px.line(df_m, x="Date", y="Cumul_M", title="Progression de Mathéo", markers=True, color_discrete_sequence=['#17BECF'])
-        st.plotly_chart(fig_m, use_container_width=True)
+        # Création du tableau spécifique à Mathéo
+        df_m = df_all.sort_values("Date", ascending=False).copy()
+        df_m['Ma Part (50%)'] = df_m.apply(lambda x: (x['Montant']/2) if (x['Payé'] == True or x['Montant'] < 0) else 0, axis=1)
+        
+        st.write("### 📜 Détail de mes gains")
+        st.dataframe(
+            df_m[df_m['Ma Part (50%)'] != 0][["Date", "Description", "Montant", "Ma Part (50%)"]],
+            use_container_width=True,
+            hide_index=True
+        )
