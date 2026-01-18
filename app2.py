@@ -2,7 +2,22 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
+from streamlit_gsheets import GSheetsConnection
 
+def load_data():
+    # Lit les données de la feuille principale
+    return conn.read(ttl="0s")
+
+# Chargement initial dans une variable
+df_all = load_data()
+
+# Exemple pour mettre à jour tout le fichier avec un nouveau tableau (df_modifie)
+if st.button("Sauvegarder dans Sheets"):
+    conn.update(data=df_modifie)
+    st.success("Données synchronisées !")
+    
+# Création de l'objet de connexion
+conn = st.connection("gsheets", type=GSheetsConnection)
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Whatnot Duo Tracker", layout="wide")
 st.title("🤝 Gestion Duo Mathéo & Julie")
