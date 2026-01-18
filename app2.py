@@ -2,33 +2,16 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
-from streamlit_gsheets import GSheetsConnection
 
-# --- CONFIG ---
+# --- CONFIGURATION ---
 st.set_page_config(page_title="Whatnot Duo Tracker", layout="wide")
 st.title("🤝 Gestion Duo Mathéo & Julie")
 
-# --- CONNEXION ---
-conn = st.connection("gsheets", type=GSheetsConnection)
+# --- INITIALISATION ---
+if 'data' not in st.session_state:
+    st.session_state.data = pd.DataFrame(columns=["Date", "Type", "Description", "Montant", "Année", "Payé"])
 
-def load_data():
-    data = conn.read(ttl="0s")
-    if data is not None and not data.empty:
-        data = data.dropna(how="all")
-        data["Date"] = pd.to_datetime(data["Date"], errors="coerce")
-        data = data.dropna(subset=["Date"])
-        data["Montant"] = pd.to_numeric(data["Montant"], errors="coerce").fillna(0)
-        data["Payé"] = (
-            data["Payé"]
-            .astype(str)
-            .str.lower()
-            .isin(["true", "1", "vrai", "checked", "x"])
-        )
-    return data
-
-df_all = load_data()
-
-# --- SIDEBAR ---
+# --- BARRE LATÉRALE ---
 st.sidebar.header("📝 Saisir une opération")
 type_op = st.sidebar.selectbox("Nature", ["Vente (Gain net Whatnot)", "Achat Stock (Dépense)"])
 desc = st.sidebar.text_input("Description")
@@ -38,105 +21,103 @@ date_op = st.sidebar.date_input("Date", datetime.now())
 if st.sidebar.button("Enregistrer"):
     valeur = montant if "Vente" in type_op else -montant
     new_row = pd.DataFrame([{
-        "Date": date_op.strftime("%Y-%m-%d"),
-        "Type": type_op,
-        "Description": desc,
-        "Montant": valeur,
+        "Date": pd.to_datetime(date_op), 
+        "Type": type_op, 
+        "Description": desc, 
+        "Montant": valeur, 
         "Année": str(date_op.year),
         "Payé": False
     }])
-    df_all = pd.concat([df_all, new_row], ignore_index=True)
-    conn.update(data=df_all)
+    st.session_state.data = pd.concat([st.session_state.data, new_row], ignore_index=True)
     st.sidebar.success("Enregistré !")
-    st.rerun()
 
-# =======================
-# 🔢 CALCULS CORRECTS
-# =======================
+# --- CALCULS HISTORIQUES (NE SE RÉINITIALISENT PAS) ---
+df_all = st.session_state.data
+ca_historique = df_all[df_all["Montant"] > 0]["Montant"].sum() if not df_all.empty else 0
+achats_historique = abs(df_all[df_all["Montant"] < 0]["Montant"].sum()) if not df_all.empty else 0
+benefice_historique = ca_historique - achats_historique
 
-# Historique total
-ca_historique = df_all[df_all["Montant"] > 0]["Montant"].sum()
-achats_historique = abs(df_all[df_all["Montant"] < 0]["Montant"].sum())
-benefice_total = ca_historique - achats_historique
+# --- CALCULS DE PAIEMENT (SE RÉINITIALISENT) ---
+df_en_attente = df_all[df_all["Payé"] == False] if not df_all.empty else pd.DataFrame()
+ca_en_attente = df_en_attente[df_en_attente["Montant"] > 0]["Montant"].sum() if not df_en_attente.empty else 0
+achats_en_attente = abs(df_en_attente[df_en_attente["Montant"] < 0]["Montant"].sum()) if not df_en_attente.empty else 0
+# Le bénéfice net à partager qui se remet à zéro
+benefice_net_partageable = ca_en_attente - achats_en_attente
 
-# Bénéfice NON PAYÉ
-df_non_paye = df_all[df_all["Payé"] == False]
-benefice_a_partager = df_non_paye["Montant"].sum()
+# --- ORGANISATION EN ONGLETS ---
+tab1, tab2, tab3 = st.tabs(["📊 Statistiques & Régularisation", "👩‍💻 Compte Julie", "👨‍💻 Compte Mathéo"])
 
-# Bénéfice DÉJÀ PAYÉ
-df_paye = df_all[df_all["Payé"] == True]
-benefice_deja_paye = df_paye["Montant"].sum()
-
-# Part individuelle
-part_julie = benefice_deja_paye / 2
-part_matheo = benefice_deja_paye / 2
-
-# --- TABS ---
-tab1, tab2, tab3 = st.tabs([
-    "📊 Statistiques & Régularisation",
-    "👩‍💻 Compte Julie",
-    "👨‍💻 Compte Mathéo"
-])
-
-# =======================
-# 📊 TAB 1
-# =======================
 with tab1:
+    # --- COMPTEURS FIXES (HISTORIQUE) ---
+    st.subheader("📈 Performance Totale (Historique)")
     c1, c2, c3 = st.columns(3)
     c1.metric("CA Total", f"{ca_historique:.2f} €")
-    c2.metric("Achats", f"-{achats_historique:.2f} €")
-    c3.metric("Bénéfice Total", f"{benefice_total:.2f} €")
+    c2.metric("Total Achats Stock", f"-{achats_historique:.2f} €")
+    c3.metric("Bénéfice Brut Total", f"{benefice_historique:.2f} €")
+    
+    st.divider()
+    
+    # --- SECTION RÉINITIALISABLE (PAIEMENT) ---
+    st.subheader("💳 Paiements en cours (Remise à zéro)")
+    col_pay, col_imp = st.columns(2)
+    
+    with col_pay:
+        st.success(f"💰 Reste à partager : **{max(0, benefice_net_partageable):.2f} €**")
+        st.write(f"👉 Verser à Julie : **{(max(0, benefice_net_partageable)/2):.2f} €**")
+        st.caption("Ce bloc revient à 0 quand vous cochez 'Payé' dans le tableau.")
+
+    with col_imp:
+        total_impots = ca_historique * 0.22
+        st.error(f"🏦 Impôts Totaux (22% du CA) : **{total_impots:.2f} €**")
+        st.caption(f"Soit {total_impots/2:.2f} € par personne sur l'année.")
 
     st.divider()
+    
+    # --- GRAPHIQUE GLOBAL ---
+    if not df_all.empty:
+        st.subheader("📈 Courbe de croissance globale")
+        df_all['Date'] = pd.to_datetime(df_all['Date'])
+        df_global = df_all.sort_values("Date").copy()
+        df_global['Cumul'] = df_global['Montant'].cumsum()
+        fig_global = px.area(df_global, x="Date", y="Cumul", color_discrete_sequence=['#636EFA'])
+        st.plotly_chart(fig_global, use_container_width=True)
 
-    st.success(f"💰 Reste à partager : **{max(0, benefice_a_partager):.2f} €**")
-    st.write(f"👉 Verser à Julie : **{max(0, benefice_a_partager)/2:.2f} €**")
-
-    st.divider()
-
+    # --- TABLEAU DES TRANSACTIONS ---
+    st.subheader("📑 Historique des transactions")
     edited_df = st.data_editor(
         df_all,
-        column_config={
-            "Payé": st.column_config.CheckboxColumn("Payé ?"),
-            "Montant": st.column_config.NumberColumn("Montant (€)", format="%.2f"),
-            "Année": None
-        },
+        column_config={"Payé": st.column_config.CheckboxColumn("Payé ?"), "Année": None},
+        num_rows="dynamic",
         use_container_width=True,
-        hide_index=True
+        hide_index=True,
+        key="global_editor"
     )
-
-    if st.button("💾 Sauvegarder"):
-        edited_df["Date"] = edited_df["Date"].dt.strftime("%Y-%m-%d")
-        conn.update(data=edited_df)
-        st.success("Mis à jour")
+    if st.button("💾 Sauvegarder les changements"):
+        st.session_state.data = edited_df
         st.rerun()
 
-# =======================
-# 👩‍💻 JULIE
-# =======================
 with tab2:
-    st.metric("💰 Bénéfice encaissé (Julie)", f"{part_julie:.2f} €")
+    st.subheader("🏆 Score Julie")
+    # Argent perso (Toutes les ventes payées - Tous les achats historiques) / 2
+    ventes_payees = df_all[(df_all["Montant"] > 0) & (df_all["Payé"] == True)]["Montant"].sum() if not df_all.empty else 0
+    argent_julie = (ventes_payees - achats_historique) / 2
+    st.write(f"Bénéfice historique encaissé : **{argent_julie:.2f} €**")
+    
+    if not df_all.empty:
+        df_j = df_all.sort_values("Date").copy()
+        df_j['Gain_J'] = df_j.apply(lambda x: (x['Montant']/2) if (x['Montant'] < 0 or x['Payé'] == True) else 0, axis=1)
+        df_j['Cumul_J'] = df_j['Gain_J'].cumsum()
+        fig_j = px.line(df_j, x="Date", y="Cumul_J", title="Progression de Julie", markers=True, color_discrete_sequence=['#FF66C4'])
+        st.plotly_chart(fig_j, use_container_width=True)
 
-    df_j = df_paye.copy()
-    df_j["Part Julie"] = df_j["Montant"] / 2
-
-    st.dataframe(
-        df_j[["Date", "Description", "Montant", "Part Julie"]],
-        use_container_width=True,
-        hide_index=True
-    )
-
-# =======================
-# 👨‍💻 MATHEO
-# =======================
 with tab3:
-    st.metric("💰 Bénéfice encaissé (Mathéo)", f"{part_matheo:.2f} €")
-
-    df_m = df_paye.copy()
-    df_m["Part Mathéo"] = df_m["Montant"] / 2
-
-    st.dataframe(
-        df_m[["Date", "Description", "Montant", "Part Mathéo"]],
-        use_container_width=True,
-        hide_index=True
-    )
+    st.subheader("🏆 Score Mathéo")
+    argent_matheo = (ventes_payees - achats_historique) / 2
+    st.write(f"Bénéfice historique encaissé : **{argent_matheo:.2f} €**")
+    
+    if not df_all.empty:
+        df_m = df_all.sort_values("Date").copy()
+        df_m['Gain_M'] = df_m.apply(lambda x: (x['Montant']/2) if (x['Montant'] < 0 or x['Payé'] == True) else 0, axis=1)
+        df_m['Cumul_M'] = df_m['Gain_M'].cumsum()
+        fig_m = px.line(df_m, x="Date", y="Cumul_M", title="Progression de Mathéo", markers=True, color_discrete_sequence=['#17BECF'])
+        st.plotly_chart(fig_m, use_container_width=True)
