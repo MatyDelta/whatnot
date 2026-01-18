@@ -2,14 +2,30 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
+from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Whatnot Duo Tracker", layout="wide")
 st.title("🤝 Gestion Duo Mathéo & Julie")
 
+# --- LIAISON GOOGLE SHEETS ---
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+def load_data():
+    data = conn.read(ttl="0s")
+    if data is not None and not data.empty:
+        # Nettoyage pour éviter les erreurs de format (NaN, Types)
+        data = data.dropna(how='all')
+        data['Date'] = pd.to_datetime(data['Date'], errors='coerce')
+        data['Montant'] = pd.to_numeric(data['Montant'], errors='coerce').fillna(0)
+        # Force le type booléen pour les cases à cocher
+        data['Payé'] = data['Payé'].astype(str).str.lower().isin(['true', '1', 'vrai', 'x']).astype(bool)
+    return data
+
 # --- INITIALISATION ---
+# On charge les données depuis Sheets au lieu d'un DataFrame vide
 if 'data' not in st.session_state:
-    st.session_state.data = pd.DataFrame(columns=["Date", "Type", "Description", "Montant", "Année", "Payé"])
+    st.session_state.data = load_data()
 
 # --- BARRE LATÉRALE ---
 st.sidebar.header("📝 Saisir une opération")
@@ -29,26 +45,31 @@ if st.sidebar.button("Enregistrer"):
         "Payé": False
     }])
     st.session_state.data = pd.concat([st.session_state.data, new_row], ignore_index=True)
-    st.sidebar.success("Enregistré !")
+    
+    # SAUVEGARDE AUTOMATIQUE VERS SHEETS
+    df_save = st.session_state.data.copy()
+    df_save['Date'] = df_save['Date'].dt.strftime('%Y-%m-%d')
+    conn.update(data=df_save)
+    
+    st.sidebar.success("Enregistré et synchronisé !")
+    st.rerun()
 
-# --- CALCULS HISTORIQUES (NE SE RÉINITIALISENT PAS) ---
+# --- CALCULS HISTORIQUES ---
 df_all = st.session_state.data
 ca_historique = df_all[df_all["Montant"] > 0]["Montant"].sum() if not df_all.empty else 0
 achats_historique = abs(df_all[df_all["Montant"] < 0]["Montant"].sum()) if not df_all.empty else 0
 benefice_historique = ca_historique - achats_historique
 
-# --- CALCULS DE PAIEMENT (SE RÉINITIALISENT) ---
+# --- CALCULS DE PAIEMENT ---
 df_en_attente = df_all[df_all["Payé"] == False] if not df_all.empty else pd.DataFrame()
 ca_en_attente = df_en_attente[df_en_attente["Montant"] > 0]["Montant"].sum() if not df_en_attente.empty else 0
 achats_en_attente = abs(df_en_attente[df_en_attente["Montant"] < 0]["Montant"].sum()) if not df_en_attente.empty else 0
-# Le bénéfice net à partager qui se remet à zéro
 benefice_net_partageable = ca_en_attente - achats_en_attente
 
 # --- ORGANISATION EN ONGLETS ---
 tab1, tab2, tab3 = st.tabs(["📊 Statistiques & Régularisation", "👩‍💻 Compte Julie", "👨‍💻 Compte Mathéo"])
 
 with tab1:
-    # --- COMPTEURS FIXES (HISTORIQUE) ---
     st.subheader("📈 Performance Totale (Historique)")
     c1, c2, c3 = st.columns(3)
     c1.metric("CA Total", f"{ca_historique:.2f} €")
@@ -57,7 +78,6 @@ with tab1:
     
     st.divider()
     
-    # --- SECTION RÉINITIALISABLE (PAIEMENT) ---
     st.subheader("💳 Paiements en cours (Remise à zéro)")
     col_pay, col_imp = st.columns(2)
     
@@ -73,7 +93,6 @@ with tab1:
 
     st.divider()
     
-    # --- GRAPHIQUE GLOBAL ---
     if not df_all.empty:
         st.subheader("📈 Courbe de croissance globale")
         df_all['Date'] = pd.to_datetime(df_all['Date'])
@@ -82,7 +101,6 @@ with tab1:
         fig_global = px.area(df_global, x="Date", y="Cumul", color_discrete_sequence=['#636EFA'])
         st.plotly_chart(fig_global, use_container_width=True)
 
-    # --- TABLEAU DES TRANSACTIONS ---
     st.subheader("📑 Historique des transactions")
     edited_df = st.data_editor(
         df_all,
@@ -92,13 +110,18 @@ with tab1:
         hide_index=True,
         key="global_editor"
     )
+    
     if st.button("💾 Sauvegarder les changements"):
         st.session_state.data = edited_df
+        # MISE À JOUR VERS GOOGLE SHEETS
+        df_save = edited_df.copy()
+        df_save['Date'] = pd.to_datetime(df_save['Date']).dt.strftime('%Y-%m-%d')
+        conn.update(data=df_save)
+        st.success("Synchronisation Sheets terminée !")
         st.rerun()
 
 with tab2:
     st.subheader("🏆 Score Julie")
-    # Argent perso (Toutes les ventes payées - Tous les achats historiques) / 2
     ventes_payees = df_all[(df_all["Montant"] > 0) & (df_all["Payé"] == True)]["Montant"].sum() if not df_all.empty else 0
     argent_julie = (ventes_payees - achats_historique) / 2
     st.write(f"Bénéfice historique encaissé : **{argent_julie:.2f} €**")
