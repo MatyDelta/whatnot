@@ -18,6 +18,7 @@ def load_data():
 df_all = load_data()
 
 # --- NETTOYAGE DES DONNÉES (POUR ÉVITER LES ERREURS DE DATE) ---
+# --- NETTOYAGE DES DONNÉES ---
 if not df_all.empty:
     # 1. Supprime les lignes totalement vides
     df_all = df_all.dropna(how='all')
@@ -29,10 +30,12 @@ if not df_all.empty:
     # 3. Nettoyage des montants
     df_all['Montant'] = pd.to_numeric(df_all['Montant'], errors='coerce').fillna(0)
     
-    # 4. TRANSFORMATION STRICTE EN BOOLÉEN (Correctif pour l'erreur APIException)
-    # On force d'abord tout en texte, puis on vérifie si c'est "vrai"
+    # 4. TRANSFORMATION STRICTE EN BOOLÉEN (Correctif pour StreamlitAPIException)
+    # On transforme tout en texte minuscule, puis on vérifie si c'est une valeur "vraie"
+    # Cela transforme les cases vides, "None", "0" ou "False" en un vrai FALSE
     df_all['Payé'] = df_all['Payé'].astype(str).str.lower().isin(['true', '1', 'yes', 'vrai', 'checked'])
-    # On s'assure que le type final est bien bool (Vrai/Faux)
+    
+    # LIGNE CRUCIALE : On dit explicitement à Streamlit que c'est du booléen
     df_all['Payé'] = df_all['Payé'].astype(bool)
 # --- BARRE LATÉRALE ---
 st.sidebar.header("📝 Saisir une opération")
