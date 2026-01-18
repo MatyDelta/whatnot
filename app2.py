@@ -57,35 +57,48 @@ df_all = st.session_state.data
 
 # 1. On isole uniquement les gains (ventes)
 df_ventes = df_all[df_all["Montant"] > 0]
+df_achats = df_all[df_all["Montant"] < 0]
 
-# 2. Gains en attente (Non cochés)
+# 2. Performance Historique (Toutes les données)
+ca_historique = df_ventes["Montant"].sum()
+achats_historique = abs(df_achats["Montant"].sum())
+benefice_brut_total = ca_historique - achats_historique
+
+# 3. Gains en attente (Non cochés - Pour le paiement)
 gains_non_payes = df_ventes[df_ventes["Payé"] == False]["Montant"].sum()
 
-# 3. Gains validés (Cochés)
+# 4. Gains validés (Cochés - Pour les scores Julie/Mathéo)
 gains_valides = df_ventes[df_ventes["Payé"] == True]["Montant"].sum()
 
-# 4. Historique global (CA et Stock) pour info
-ca_historique = df_ventes["Montant"].sum()
-achats_historique = abs(df_all[df_all["Montant"] < 0]["Montant"].sum())
-
 # --- ORGANISATION EN ONGLETS ---
-tab1, tab2, tab3 = st.tabs(["📊 Paiements & Historique", "👩‍💻 Compte Julie", "👨‍💻 Compte Mathéo"])
+tab1, tab2, tab3 = st.tabs(["📊 Statistiques & Régularisation", "👩‍💻 Compte Julie", "👨‍💻 Compte Mathéo"])
 
 with tab1:
-    st.subheader("💳 Paiements en cours (Gains nets)")
+    # --- BLOC PERFORMANCE RÉINTÉGRÉ ---
+    st.subheader("📈 Performance Totale (Historique)")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("CA Total", f"{ca_historique:.2f} €")
+    c2.metric("Total Achats Stock", f"-{achats_historique:.2f} €")
+    c3.metric("Bénéfice Brut Total", f"{benefice_brut_total:.2f} €")
+    
+    st.divider()
+
+    # --- BLOC PAIEMENT ---
+    st.subheader("💳 Paiements en cours (Gains lives)")
     col_pay, col_imp = st.columns(2)
     
     with col_pay:
         st.success(f"💰 Somme des gains à partager : **{gains_non_payes:.2f} €**")
         st.write(f"👉 Verser à Julie (50%) : **{(gains_non_payes/2):.2f} €**")
-        st.caption("Ce montant additionne tous vos gains non validés.")
+        st.caption("Ce montant additionne les ventes non validées.")
 
     with col_imp:
         st.error(f"🏦 Impôts prévisionnels (22% CA) : **{(ca_historique * 0.22):.2f} €**")
-        st.caption("Calculé sur la totalité des ventes historiques.")
+        st.caption(f"Soit {(ca_historique * 0.22)/2:.2f} € par personne.")
 
     st.divider()
 
+    # --- TABLEAU DES TRANSACTIONS ---
     st.subheader("📑 Historique des transactions")
     edited_df = st.data_editor(
         df_all,
