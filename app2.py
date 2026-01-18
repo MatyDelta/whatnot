@@ -17,26 +17,24 @@ def load_data():
 
 df_all = load_data()
 
-# --- NETTOYAGE DES DONNÉES (POUR ÉVITER LES ERREURS DE DATE) ---
 # --- NETTOYAGE DES DONNÉES ---
 if not df_all.empty:
     # 1. Supprime les lignes totalement vides
     df_all = df_all.dropna(how='all')
     
-    # 2. Transforme la date
+    # 2. Transforme la date (errors='coerce' évite le plantage si texte bizarre)
     df_all['Date'] = pd.to_datetime(df_all['Date'], errors='coerce')
     df_all = df_all.dropna(subset=['Date'])
     
     # 3. Nettoyage des montants
     df_all['Montant'] = pd.to_numeric(df_all['Montant'], errors='coerce').fillna(0)
     
-    # 4. TRANSFORMATION STRICTE EN BOOLÉEN (Correctif pour StreamlitAPIException)
+    # 4. TRANSFORMATION STRICTE EN BOOLÉEN
     # On transforme tout en texte minuscule, puis on vérifie si c'est une valeur "vraie"
-    # Cela transforme les cases vides, "None", "0" ou "False" en un vrai FALSE
-    df_all['Payé'] = df_all['Payé'].astype(str).str.lower().isin(['true', '1', 'yes', 'vrai', 'checked'])
-    
-    # LIGNE CRUCIALE : On dit explicitement à Streamlit que c'est du booléen
+    df_all['Payé'] = df_all['Payé'].astype(str).str.lower().str.strip().isin(['true', '1', 'yes', 'vrai', 'checked'])
+    # LIGNE CRUCIALE : On force le type booléen pour le data_editor
     df_all['Payé'] = df_all['Payé'].astype(bool)
+
 # --- BARRE LATÉRALE ---
 st.sidebar.header("📝 Saisir une opération")
 type_op = st.sidebar.selectbox("Nature", ["Vente (Gain net Whatnot)", "Achat Stock (Dépense)"])
@@ -65,12 +63,10 @@ ca_historique = df_all[df_all["Montant"] > 0]["Montant"].sum() if not df_all.emp
 achats_historique = abs(df_all[df_all["Montant"] < 0]["Montant"].sum()) if not df_all.empty else 0
 benefice_historique = ca_historique - achats_historique
 
-# --- CALCULS DE PAIEMENT (BASÉS SUR LA COLONNE PAYÉ) ---
-# Ce bloc calcule ce qui n'est pas encore coché "Payé"
+# --- CALCULS DE PAIEMENT ---
 df_en_attente = df_all[df_all["Payé"] == False] if not df_all.empty else pd.DataFrame()
 ca_en_attente = df_en_attente[df_en_attente["Montant"] > 0]["Montant"].sum() if not df_en_attente.empty else 0
 achats_en_attente = abs(df_en_attente[df_en_attente["Montant"] < 0]["Montant"].sum()) if not df_en_attente.empty else 0
-# Bénéfice net à partager qui se remet à zéro une fois les ventes payées
 benefice_net_partageable = ca_en_attente - achats_en_attente
 
 # --- ORGANISATION EN ONGLETS ---
@@ -107,30 +103,36 @@ with tab1:
         st.plotly_chart(fig_global, use_container_width=True)
 
     st.subheader("📑 Historique des transactions")
-    # L'éditeur permet de cocher "Payé" directement
+    # Configuration explicite des colonnes pour éviter les erreurs de type
     edited_df = st.data_editor(
         df_all,
-        column_config={"Payé": st.column_config.CheckboxColumn("Payé ?"), "Année": None},
+        column_config={
+            "Payé": st.column_config.CheckboxColumn("Payé ?"),
+            "Date": st.column_config.DateColumn("Date"),
+            "Montant": st.column_config.NumberColumn("Montant (€)", format="%.2f"),
+            "Année": None # Cache la colonne année
+        },
         num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
         key="global_editor"
     )
     if st.button("💾 Sauvegarder les changements"):
-        conn.update(data=edited_df)
+        # Conversion de la colonne Date en string avant l'envoi pour éviter les bugs Sheets
+        df_to_save = edited_df.copy()
+        df_to_save['Date'] = df_to_save['Date'].dt.strftime('%Y-%m-%d')
+        conn.update(data=df_to_save)
         st.success("Modifications synchronisées avec le Sheets !")
         st.rerun()
 
 with tab2:
     st.subheader("🏆 Score Julie")
-    # Score = (Ventes payées - Tous les achats) / 2
     ventes_payees = df_all[(df_all["Montant"] > 0) & (df_all["Payé"] == True)]["Montant"].sum() if not df_all.empty else 0
     argent_julie = (ventes_payees - achats_historique) / 2
     st.write(f"Bénéfice historique encaissé : **{argent_julie:.2f} €**")
     
     if not df_all.empty:
         df_j = df_all.sort_values("Date").copy()
-        # On calcule le gain perso : moitié du montant si achat OU si vente payée
         df_j['Gain_J'] = df_j.apply(lambda x: (x['Montant']/2) if (x['Montant'] < 0 or x['Payé'] == True) else 0, axis=1)
         df_j['Cumul_J'] = df_j['Gain_J'].cumsum()
         fig_j = px.line(df_j, x="Date", y="Cumul_J", title="Progression de Julie", markers=True, color_discrete_sequence=['#FF66C4'])
