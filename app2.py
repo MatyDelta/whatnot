@@ -4,21 +4,21 @@ import plotly.express as px
 from datetime import datetime
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Gestion Whatnot Duo", layout="wide")
-st.title("💰 Suivi Business Whatnot")
+st.set_page_config(page_title="Whatnot Duo Tracker", layout="wide")
+st.title("🤝 Gestion Duo Whatnot")
 
 # --- INITIALISATION ---
 if 'data' not in st.session_state:
     st.session_state.data = pd.DataFrame(columns=["Date", "Type", "Description", "Montant", "Année", "Payé"])
 
 # --- BARRE LATÉRALE ---
-st.sidebar.header("📝 Nouvelle Opération")
+st.sidebar.header("📝 Saisir une opération")
 type_op = st.sidebar.selectbox("Nature", ["Vente (Gain net Whatnot)", "Achat Stock (Dépense)"])
-desc = st.sidebar.text_input("Description")
+desc = st.sidebar.text_input("Description (ex: Live Pokémon)")
 montant = st.sidebar.number_input("Montant (€)", min_value=0.0, step=1.0)
 date_op = st.sidebar.date_input("Date", datetime.now())
 
-if st.sidebar.button("Enregistrer l'opération"):
+if st.sidebar.button("Enregistrer"):
     valeur = montant if "Vente" in type_op else -montant
     new_row = pd.DataFrame([{
         "Date": pd.to_datetime(date_op), 
@@ -29,7 +29,7 @@ if st.sidebar.button("Enregistrer l'opération"):
         "Payé": False
     }])
     st.session_state.data = pd.concat([st.session_state.data, new_row], ignore_index=True)
-    st.sidebar.success("Enregistré !")
+    st.sidebar.success("Opération ajoutée !")
 
 # --- FILTRE PAR ANNÉE ---
 df = st.session_state.data
@@ -38,49 +38,45 @@ liste_annees = sorted(df["Année"].unique(), reverse=True) if not df.empty else 
 selection_annee = st.selectbox("📅 Année :", liste_annees)
 df_filtre = df[df["Année"] == selection_annee].copy() if not df.empty else df
 
-# --- CALCULS SIMPLIFIÉS ---
+# --- CALCULS 50/50 ---
 if not df_filtre.empty:
-    ca_net_whatnot = df_filtre[df_filtre["Montant"] > 0]["Montant"].sum()
-    total_achats = abs(df_filtre[df_filtre["Montant"] < 0]["Montant"].sum())
+    ca_net = df_filtre[df_filtre["Montant"] > 0]["Montant"].sum()
+    achats = abs(df_filtre[df_filtre["Montant"] < 0]["Montant"].sum())
     
-    # Bénéfice réel avant toute déduction fiscale
-    benefice_brut = ca_net_whatnot - total_achats
+    # 1. On calcule les impôts totaux (22% du CA)
+    impots_totaux = ca_net * 0.22
     
-    # Calcul de la part due (50% du bénéfice sur les lignes non payées)
-    # On calcule le ratio : (Ventes non payées - Achats correspondants) / 2
-    # Plus simple : on divise le bénéfice total par 2 et on ajuste selon ce qui est déjà coché
-    if benefice_brut > 0:
-        part_total_theorique = benefice_brut / 2
-        # Pourcentage de ventes restant à payer
-        total_vendu = max(ca_net_whatnot, 1)
-        reste_a_vendre = df_filtre[(df_filtre["Montant"] > 0) & (df_filtre["Payé"] == False)]["Montant"].sum()
-        reste_a_payer_collegue = (reste_a_vendre / total_vendu) * part_total_theorique
-    else:
-        reste_a_payer_collegue = 0
-        
-    impots_info = ca_net_whatnot * 0.22
+    # 2. Le bénéfice réel après avoir retiré les achats et les impôts
+    # (Puisque vous divisez tout par deux, on calcule le reste global d'abord)
+    benefice_a_se_partager = ca_net - achats - impots_totaux
+    
+    # 3. Calcul de la part due à la collègue (uniquement sur ce qui n'est pas coché 'Payé')
+    # On calcule le ratio de ce qui reste à verser
+    ventes_non_payees = df_filtre[(df_filtre["Montant"] > 0) & (df_filtre["Payé"] == False)]["Montant"].sum()
+    total_ventes = max(ca_net, 1)
+    reste_a_payer = (ventes_non_payees / total_ventes) * (benefice_a_se_partager / 2)
 else:
-    ca_net_whatnot = total_achats = benefice_brut = reste_a_payer_collegue = impots_info = 0
+    ca_net = achats = impots_totaux = benefice_a_se_partager = reste_a_payer = 0
 
 # --- AFFICHAGE ---
 c1, c2, c3 = st.columns(3)
-c1.metric("CA Net (Whatnot)", f"{ca_net_whatnot:.2f} €")
-c2.metric("Achats Stock", f"-{total_achats:.2f} €")
-c3.metric("Bénéfice à partager", f"{benefice_brut:.2f} €")
+c1.metric("CA Net (Ventes)", f"{ca_net:.2f} €")
+c2.metric("Achats (Investi)", f"-{achats:.2f} €")
+c3.metric("Impôts (22%)", f"-{impots_totaux:.2f} €")
 
 st.divider()
 
-col_tax, col_duo = st.columns(2)
-with col_tax:
-    st.warning(f"🏦 Note Impôts (Total 22%): **{impots_info:.2f} €**")
-    st.caption("Montant total estimé des impôts sur le CA de l'année.")
+col_fin, col_pay = st.columns(2)
+with col_fin:
+    st.info(f"💰 Bénéfice Total à se partager : **{max(0, benefice_a_se_partager):.2f} €**")
+    st.write(f"Soit **{(max(0, benefice_a_se_partager)/2):.2f} €** chacune.")
 
-with col_duo:
-    st.success(f"👯 Reste à donner à ma collègue : **{max(0, reste_a_payer_collegue):.2f} €**")
-    st.caption("Ce calcul divise simplement le bénéfice par deux.")
+with col_pay:
+    st.success(f"👯 Reste à verser à ma collègue : **{max(0, reste_a_payer):.2f} €**")
+    st.caption("Ce montant baisse automatiquement quand vous cochez 'Payé' dans le tableau.")
 
 # --- HISTORIQUE ---
-st.subheader("📑 Détails et Modifs")
+st.subheader("📑 Historique, Modifications et Suppressions")
 if not df_filtre.empty:
     edited_df = st.data_editor(
         df_filtre,
@@ -89,7 +85,7 @@ if not df_filtre.empty:
         use_container_width=True,
         hide_index=True
     )
-    if st.button("Enregistrer les changements"):
+    if st.button("Sauvegarder les modifications"):
         autres_annees = df[df["Année"] != selection_annee]
         st.session_state.data = pd.concat([autres_annees, edited_df], ignore_index=True)
         st.rerun()
