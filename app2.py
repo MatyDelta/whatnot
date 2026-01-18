@@ -51,14 +51,28 @@ achats_en_cours = abs(df_non_paye[df_non_paye["Montant"] < 0]["Montant"].sum()) 
 impots_en_cours = ca_en_cours * 0.22
 benef_net_en_cours = ca_en_cours - achats_en_cours - impots_en_cours
 
-# --- AFFICHAGE ---
-# 1. Les 3 colonnes classiques
+# --- AFFICHAGE DES COMPTEURS ---
 c1, c2, c3 = st.columns(3)
-c1.metric("CA Net (Ventes)", f"{ca_en_cours:.2f} €")
-c2.metric("Achats Stock", f"-{achats_en_cours:.2f} €")
-c3.metric("Bénéfice NET en cours", f"{max(0, benef_net_en_cours):.2f} €")
+c1.metric("CA Net (Ventes en cours)", f"{ca_en_cours:.2f} €")
+c2.metric("Achats Stock (en cours)", f"-{achats_en_cours:.2f} €")
+c3.metric("Bénéfice NET (en cours)", f"{max(0, benef_net_en_cours):.2f} €")
 
-# 2. La nouvelle ligne pour l'historique et le partage
+# --- GRAPHIQUE D'ÉVOLUTION ---
+st.divider()
+if not df_filtre.empty:
+    st.subheader(f"📈 Évolution du bénéfice en {selection_annee}")
+    # Préparation des données pour le graphique
+    df_graph = df_filtre.sort_values("Date").copy()
+    # On calcule le bénéfice net par ligne (Montant - 22% d'impôts si c'est une vente)
+    df_graph['Net_Ligne'] = df_graph.apply(lambda x: x['Montant'] * 0.78 if x['Montant'] > 0 else x['Montant'], axis=1)
+    df_graph['Cumul_Net'] = df_graph['Net_Ligne'].cumsum()
+    
+    fig = px.area(df_graph, x="Date", y="Cumul_Net", 
+                  labels={"Cumul_Net": "Bénéfice NET Cumulé (€)"},
+                  color_discrete_sequence=['#00CC96'])
+    st.plotly_chart(fig, use_container_width=True)
+
+# --- HISTORIQUE ET PARTAGE ---
 st.divider()
 col_hist, col_paye = st.columns(2)
 with col_hist:
@@ -69,7 +83,7 @@ with col_paye:
     st.subheader("👯 Partage")
     st.success(f"Reste à verser à ma collègue : **{(max(0, benef_net_en_cours)/2):.2f} €**")
 
-# --- HISTORIQUE ---
+# --- TABLEAU DE DÉTAILS ---
 st.divider()
 st.subheader("📑 Détails des transactions")
 if not df_filtre.empty:
