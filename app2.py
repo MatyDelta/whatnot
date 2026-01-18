@@ -5,17 +5,23 @@ import plotly.express as px
 from datetime import datetime
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Whatnot Duo Mathéo & Julie", layout="wide")
+st.set_page_config(page_title="Whatnot Duo Tracker", layout="wide")
 st.title("🤝 Gestion Duo Mathéo & Julie")
 
 # --- CONNEXION GOOGLE SHEETS ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
-    # ttl=1 permet de rafraîchir presque instantanément
     return conn.read(ttl="1s")
 
 df_all = load_data()
+
+# S'assurer que les types de données sont corrects
+if not df_all.empty:
+    df_all['Date'] = pd.to_datetime(df_all['Date'])
+    df_all['Montant'] = pd.to_numeric(df_all['Montant'], errors='coerce').fillna(0)
+    # On normalise la colonne Payé pour qu'elle soit toujours lisible
+    df_all['Payé'] = df_all['Payé'].astype(str).str.lower().isin(['true', '1', 'yes', 'vrai'])
 
 # --- BARRE LATÉRALE ---
 st.sidebar.header("📝 Saisir une opération")
@@ -36,73 +42,76 @@ if st.sidebar.button("🚀 Enregistrer et Synchroniser"):
     }])
     updated_df = pd.concat([df_all, new_row], ignore_index=True)
     conn.update(data=updated_df)
-    st.sidebar.success("Données envoyées au Cloud !")
+    st.sidebar.success("Données envoyées au Sheets !")
     st.rerun()
 
 # --- LOGIQUE DES CALCULS ---
-# 1. Performance Historique (Ne bouge jamais)
-ca_h = df_all[df_all["Montant"] > 0]["Montant"].sum() if not df_all.empty else 0
-achats_h = abs(df_all[df_all["Montant"] < 0]["Montant"].sum()) if not df_all.empty else 0
-benefice_total = ca_h - achats_h
 
-# 2. Reste à payer (Se réinitialise quand on coche "Payé")
-# On gère les cases vides ou non cochées
-if "Payé" in df_all.columns:
-    df_non_paye = df_all[df_all["Payé"].astype(str).str.lower().isin(['false', '0', 'nan', 'none', ''])]
-else:
-    df_non_paye = df_all.copy()
+# 1. Performance Historique (Ne se réinitialise JAMAIS)
+ca_total_historique = df_all[df_all["Montant"] > 0]["Montant"].sum()
+achats_total_historique = abs(df_all[df_all["Montant"] < 0]["Montant"].sum())
+benefice_brut_total = ca_total_historique - achats_total_historique
 
-ca_enc = df_non_paye[df_non_paye["Montant"] > 0]["Montant"].sum()
-ach_enc = abs(df_non_paye[df_non_paye["Montant"] < 0]["Montant"].sum())
-benef_net_a_partager = ca_enc - ach_enc
+# 2. Gains déjà encaissés (Tout ce qui est marqué "Payé")
+df_paye = df_all[df_all["Payé"] == True]
+# On calcule ce que chacun a déjà reçu (Ventes payées - TOUS les achats) / 2
+gain_encaisse_chacun = (df_paye[df_paye["Montant"] > 0]["Montant"].sum() - achats_total_historique) / 2
+gain_encaisse_chacun = max(0, gain_encaisse_chacun)
+
+# 3. Reste à payer (Ventes non cochées)
+df_non_paye = df_all[df_all["Payé"] == False]
+ca_en_attente = df_non_paye[df_non_paye["Montant"] > 0]["Montant"].sum()
+# Le bénéfice net à partager (qui se remet à 0 une fois payé)
+benef_net_partageable = ca_en_attente 
 
 # --- AFFICHAGE DES ONGLETS ---
 tab1, tab2, tab3 = st.tabs(["📊 Stats & Paiements", "👩‍💻 Julie", "👨‍💻 Mathéo"])
 
 with tab1:
-    st.subheader("📈 Performance Totale (Historique)")
+    st.subheader("📈 Performance Historique (Total)")
     c1, c2, c3 = st.columns(3)
-    c1.metric("CA Total", f"{ca_h:.2f} €")
-    c2.metric("Total Achats", f"-{achats_h:.2f} €")
-    c3.metric("Bénéfice Brut", f"{benefice_total:.2f} €")
+    c1.metric("CA Cumulé", f"{ca_total_historique:.2f} €")
+    c2.metric("Total Stocks Achetés", f"-{achats_total_historique:.2f} €")
+    c3.metric("Bénéfice Brut", f"{benefice_brut_total:.2f} €")
 
     st.divider()
     
-    st.subheader("💳 À Régulariser (Virements)")
+    st.subheader("💳 Gestion des Virements (En cours)")
     col_p, col_i = st.columns(2)
     with col_p:
-        st.success(f"💰 Reste à partager : {max(0, benef_net_a_partager):.2f} €")
-        st.info(f"👉 **Virement pour Julie : {(max(0, benef_net_a_partager)/2):.2f} €**")
+        st.success(f"💰 Reste à partager : {benef_net_partageable:.2f} €")
+        st.info(f"👉 **Virement pour Julie : {(benef_net_partageable/2):.2f} €**")
+        st.caption("Une fois le virement fait, coche 'Payé' ci-dessous et enregistre.")
     with col_i:
-        provision_impots = ca_h * 0.22
-        st.error(f"🏦 Impôts (22% du CA total) : {provision_impots:.2f} €")
-        st.caption(f"Soit {provision_impots/2:.2f} € chacun à garder.")
+        provision_impots = ca_total_historique * 0.22
+        st.error(f"🏦 Provision Impôts (22% CA) : {provision_impots:.2f} €")
+        st.caption("Calculé sur le CA total depuis le début.")
 
     st.divider()
-    st.subheader("📑 Historique Complet")
+    st.subheader("📑 Historique & Validation")
     edited_df = st.data_editor(df_all, num_rows="dynamic", use_container_width=True)
     
-    if st.button("💾 Enregistrer les modifications"):
+    if st.button("💾 Valider les changements (Payé / Modifs)"):
         conn.update(data=edited_df)
-        st.success("Modifications enregistrées !")
+        st.success("Synchronisation réussie !")
         st.rerun()
 
-# --- GRAPHIQUES POUR JULIE ET MATHÉO ---
-def draw_chart(df, title, color):
+# --- GRAPHIQUES ---
+def draw_chart(df, color, title):
     if not df.empty:
-        df = df.sort_values("Date")
-        # On calcule le gain cumulé (Montant / 2 pour chaque ligne payée ou achat)
-        df['Gain_Perso'] = df.apply(lambda x: (x['Montant']/2) if (x['Montant'] < 0 or str(x['Payé']).lower() == 'true') else 0, axis=1)
-        df['Cumul'] = df['Gain_Perso'].cumsum()
-        fig = px.area(df, x="Date", y="Cumul", title=title, color_discrete_sequence=[color])
+        df_sorted = df.sort_values("Date")
+        # Gain cumulé simplifié pour le graphique
+        df_sorted['Gain_Perso'] = df_sorted.apply(lambda x: (x['Montant']/2) if (x['Montant'] < 0 or x['Payé']) else 0, axis=1)
+        df_sorted['Cumul'] = df_sorted['Gain_Perso'].cumsum()
+        fig = px.area(df_sorted, x="Date", y="Cumul", title=title, color_discrete_sequence=[color])
         st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.write("Aucune donnée disponible.")
 
 with tab2:
-    st.subheader("🏆 Progression de Julie")
-    draw_chart(df_all, "Bénéfice cumulé Julie (€)", "#FF66C4")
+    st.subheader("👩‍💻 Espace Julie")
+    st.write(f"Argent total déjà encaissé : **{gain_encaisse_chacun:.2f} €**")
+    draw_chart(df_all, "#FF66C4", "Progression des gains - Julie")
 
 with tab3:
-    st.subheader("🏆 Progression de Mathéo")
-    draw_chart(df_all, "Bénéfice cumulé Mathéo (€)", "#17BECF")
+    st.subheader("👨‍💻 Espace Mathéo")
+    st.write(f"Argent total déjà encaissé : **{gain_encaisse_chacun:.2f} €**")
+    draw_chart(df_all, "#17BECF", "Progression des gains - Mathéo")
