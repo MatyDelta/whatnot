@@ -16,20 +16,21 @@ def load_data():
 
 df_all = load_data()
 
-# Nettoyage des données pour éviter les bugs de calcul
+# Nettoyage et formatage des données
 if not df_all.empty:
     df_all['Montant'] = pd.to_numeric(df_all['Montant'], errors='coerce').fillna(0)
-    # On s'assure que la colonne Payé est bien traitée comme un Vrai/Faux
+    # Transformation de la colonne Payé en vrai Booléen (Vrai/Faux)
     df_all['Payé'] = df_all['Payé'].astype(str).str.lower().isin(['true', '1', 'yes', 'vrai', 'checked'])
 
-# --- SAISIE RAPIDE ---
+# --- BARRE LATÉRALE : SAISIE ---
 st.sidebar.header("📝 Saisir une opération")
 type_op = st.sidebar.selectbox("Nature", ["Vente (Gain net Whatnot)", "Achat Stock (Dépense)"])
 desc = st.sidebar.text_input("Description")
 montant = st.sidebar.number_input("Montant (€)", min_value=0.0, step=1.0)
 date_op = st.sidebar.date_input("Date", datetime.now())
 
-if st.sidebar.button("🚀 Enregistrer et Synchroniser"):
+if st.sidebar.button("🚀 Enregistrer l'opération"):
+    # Une vente est positive, un achat est négatif
     valeur = montant if "Vente" in type_op else -montant
     new_row = pd.DataFrame([{
         "Date": date_op.strftime('%Y-%m-%d'), 
@@ -37,78 +38,79 @@ if st.sidebar.button("🚀 Enregistrer et Synchroniser"):
         "Description": desc, 
         "Montant": valeur, 
         "Année": str(date_op.year),
-        "Payé": False
+        "Payé": False # Par défaut, une nouvelle vente n'est pas payée
     }])
     updated_df = pd.concat([df_all, new_row], ignore_index=True)
     conn.update(data=updated_df)
-    st.sidebar.success("Données envoyées !")
+    st.sidebar.success("Opération enregistrée !")
     st.rerun()
 
-# --- LOGIQUE DES CALCULS ---
+# --- LOGIQUE DE CALCULS ---
 
-# 1. Chiffres Globaux (Historique)
-ca_total = df_all[df_all["Montant"] > 0]["Montant"].sum()
-achats_total = abs(df_all[df_all["Montant"] < 0]["Montant"].sum())
+# 1. Calcul du virement (Ventes non encore payées)
+# On ne prend que les montants positifs (ventes) qui sont à 'False' dans Payé
+df_en_attente = df_all[(df_all["Montant"] > 0) & (df_all["Payé"] == False)]
+virement_julie = df_en_attente["Montant"].sum() / 2
 
-# 2. Calcul du virement (Uniquement les ventes NON PAYÉES)
-df_non_paye = df_all[(df_all["Montant"] > 0) & (df_all["Payé"] == False)]
-reste_a_partager = df_non_paye["Montant"].sum()
+# 2. Calcul des gains personnels (Ventes payées ET TOUS les achats)
+# Chaque euro gagné ou dépensé est divisé par 2
+def calculer_total_perso(df):
+    if df.empty: return 0.0
+    # On prend les ventes SEULEMENT SI payées + TOUS les achats (négatifs)
+    masque = (df["Montant"] < 0) | ((df["Montant"] > 0) & (df["Payé"] == True))
+    return df[masque]["Montant"].sum() / 2
 
-# 3. Calcul pour les graphiques (Uniquement les ventes PAYÉES et on déduit les achats)
-# On divise les gains par 2 pour chacun
-df_ventes_payees = df_all[(df_all["Montant"] > 0) & (df_all["Payé"] == True)]
-gain_paye_chacun = (df_ventes_payees["Montant"].sum() / 2)
+total_perso = calculer_total_perso(df_all)
 
 # --- AFFICHAGE ---
 tab1, tab2, tab3 = st.tabs(["📊 Dashboard & Paiements", "👩‍💻 Julie", "👨‍💻 Mathéo"])
 
 with tab1:
     st.subheader("💰 État des Comptes")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Chiffre d'Affaires Total", f"{ca_total:.2f} €")
-    c2.metric("Total Achats Stock", f"-{achats_total:.2f} €")
-    c3.metric("Bénéfice Brut", f"{(ca_total - achats_total):.2f} €")
-
-    st.divider()
+    c1, c2 = st.columns(2)
     
-    col_v, col_i = st.columns(2)
-    with col_v:
-        st.success(f"💶 Virement en attente pour Julie : {(reste_a_partager/2):.2f} €")
-        st.caption("Dès que tu coches 'Payé' dans le tableau, ce montant revient à zéro.")
-    with col_i:
+    with c1:
+        st.success(f"💶 Virement à faire pour Julie : {virement_julie:.2f} €")
+        st.caption("Réinitialisé dès que la vente est cochée 'Payé'.")
+    
+    with c2:
+        # Calcul de la provision pour impôts (22% sur le CA total des ventes)
+        ca_total = df_all[df_all["Montant"] > 0]["Montant"].sum()
         st.error(f"🏦 Charge URSSAF (22%) : {(ca_total * 0.22):.2f} €")
 
     st.divider()
-    st.subheader("📑 Tableau de gestion (Cochez 'Payé' ici)")
-    # Le data_editor permet de cocher directement les cases
+    st.subheader("📑 Historique & Validation (Cochez ici)")
+    # Éditeur interactif pour cocher "Payé"
     edited_df = st.data_editor(df_all, num_rows="dynamic", use_container_width=True)
     
     if st.button("💾 Sauvegarder les modifications"):
         conn.update(data=edited_df)
-        st.success("C'est enregistré dans Google Sheets !")
+        st.success("Modifications synchronisées avec Google Sheets !")
         st.rerun()
 
-# --- GRAPHIQUES ---
-def tracer_gain(df, couleur, nom):
+# --- FONCTION GRAPHIQUE ---
+def tracer_graphique(df, couleur, nom):
     if not df.empty:
-        # On ne prend que les lignes payées pour le gain réel ou les achats pour le stock
-        df_graph = df.copy()
-        # Calcul du gain perso : + (Montant/2) si payé, - (Montant/2) si achat
-        df_graph['Gain_Perso'] = df_graph.apply(
-            lambda x: (x['Montant']/2) if (x['Payé'] == True or x['Montant'] < 0) else 0, axis=1
-        )
-        df_graph = df_graph.sort_values("Date")
-        df_graph['Cumul'] = df_graph['Gain_Perso'].cumsum()
+        # Filtrer : Achats (tous) + Ventes (payées seulement)
+        df_filtre = df[(df["Montant"] < 0) | (df["Payé"] == True)].copy()
+        df_filtre = df_filtre.sort_values("Date")
+        # Division par deux pour le cumul perso
+        df_filtre['Montant_Perso'] = df_filtre['Montant'] / 2
+        df_filtre['Cumul_Gains'] = df_filtre['Montant_Perso'].cumsum()
         
-        fig = px.area(df_graph, x="Date", y="Cumul", title=f"Progression Gains : {nom}", color_discrete_sequence=[couleur])
+        fig = px.area(df_filtre, x="Date", y="Cumul_Gains", 
+                     title=f"Evolution du compte de {nom}",
+                     color_discrete_sequence=[couleur])
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("Aucune donnée à afficher")
+        st.info("Aucune donnée encaissée.")
 
 with tab2:
-    st.subheader(f"Julie : {gain_paye_chacun:.2f} € encaissés")
-    tracer_gain(df_all, "#FF66C4", "Julie")
+    st.header("👩‍💻 Espace Julie")
+    st.metric("Total encaissé (après achats)", f"{total_perso:.2f} €")
+    tracer_graphique(df_all, "#FF66C4", "Julie")
 
 with tab3:
-    st.subheader(f"Mathéo : {gain_paye_chacun:.2f} € encaissés")
-    tracer_gain(df_all, "#17BECF", "Mathéo")
+    st.header("👨‍💻 Espace Mathéo")
+    st.metric("Total encaissé (après achats)", f"{total_perso:.2f} €")
+    tracer_graphique(df_all, "#17BECF", "Mathéo")
