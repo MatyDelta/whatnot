@@ -31,60 +31,58 @@ if st.sidebar.button("Enregistrer"):
     st.session_state.data = pd.concat([st.session_state.data, new_row], ignore_index=True)
     st.sidebar.success("Enregistré !")
 
-# --- CALCULS ---
+# --- CALCULS HISTORIQUES (NE SE RÉINITIALISENT PAS) ---
 df_all = st.session_state.data
-ca_h = df_all[df_all["Montant"] > 0]["Montant"].sum() if not df_all.empty else 0
-achats_h = abs(df_all[df_all["Montant"] < 0]["Montant"].sum()) if not df_all.empty else 0
-benef_h = ca_h - achats_h
+ca_historique = df_all[df_all["Montant"] > 0]["Montant"].sum() if not df_all.empty else 0
+achats_historique = abs(df_all[df_all["Montant"] < 0]["Montant"].sum()) if not df_all.empty else 0
+benefice_historique = ca_historique - achats_historique
 
-# Argent perso historique (Ventes payées - tous les achats) / 2
-ventes_payees = df_all[(df_all["Montant"] > 0) & (df_all["Payé"] == True)]["Montant"].sum() if not df_all.empty else 0
-argent_perso_historique = (ventes_payees - achats_h) / 2
-
-# --- CALCULS "EN COURS" (Ce qu'il reste à régulariser) ---
-df_non_paye = df_all[df_all["Payé"] == False] if not df_all.empty else pd.DataFrame()
-ca_en_cours = df_non_paye[df_non_paye["Montant"] > 0]["Montant"].sum() if not df_non_paye.empty else 0
-achats_en_cours = abs(df_non_paye[df_non_paye["Montant"] < 0]["Montant"].sum()) if not df_non_paye.empty else 0
-benef_brut_en_cours = ca_en_cours - achats_en_cours
+# --- CALCULS DE PAIEMENT (SE RÉINITIALISENT) ---
+df_en_attente = df_all[df_all["Payé"] == False] if not df_all.empty else pd.DataFrame()
+ca_en_attente = df_en_attente[df_en_attente["Montant"] > 0]["Montant"].sum() if not df_en_attente.empty else 0
+achats_en_attente = abs(df_en_attente[df_en_attente["Montant"] < 0]["Montant"].sum()) if not df_en_attente.empty else 0
+# Le bénéfice net à partager qui se remet à zéro
+benefice_net_partageable = ca_en_attente - achats_en_attente
 
 # --- ORGANISATION EN ONGLETS ---
-tab1, tab2, tab3 = st.tabs(["📊 Vue Globale & Régularisation", "👩‍💻 Compte Julie", "👨‍💻 Compte Mathéo"])
+tab1, tab2, tab3 = st.tabs(["📊 Statistiques & Régularisation", "👩‍💻 Compte Julie", "👨‍💻 Compte Mathéo"])
 
 with tab1:
-    # --- COMPTEURS DE RÉGULARISATION ---
-    st.subheader("⚠️ À régulariser (Ventes non encore payées)")
+    # --- COMPTEURS FIXES (HISTORIQUE) ---
+    st.subheader("📈 Performance Totale (Historique)")
     c1, c2, c3 = st.columns(3)
-    c1.metric("CA en attente", f"{ca_en_cours:.2f} €")
-    c2.metric("Achats à déduire", f"-{achats_en_cours:.2f} €")
-    c3.metric("Bénéfice à partager", f"{benef_brut_en_cours:.2f} €")
+    c1.metric("CA Total", f"{ca_historique:.2f} €")
+    c2.metric("Total Achats Stock", f"-{achats_historique:.2f} €")
+    c3.metric("Bénéfice Brut Total", f"{benefice_historique:.2f} €")
     
     st.divider()
     
-    # --- SECTION IMPOTS ET DUO ---
-    col_impots, col_duo = st.columns(2)
-    with col_impots:
-        st.subheader("🏦 Section Impôts")
-        total_impots = ca_en_cours * 0.22
-        st.error(f"Provision Impôts (22% du CA) : **{total_impots:.2f} €**")
-        st.caption(f"Soit {total_impots/2:.2f} € chacune à mettre de côté.")
+    # --- SECTION RÉINITIALISABLE (PAIEMENT) ---
+    st.subheader("💳 Paiements en cours (Remise à zéro)")
+    col_pay, col_imp = st.columns(2)
+    
+    with col_pay:
+        st.success(f"💰 Reste à partager : **{max(0, benefice_net_partageable):.2f} €**")
+        st.write(f"👉 Verser à Julie : **{(max(0, benefice_net_partageable)/2):.2f} €**")
+        st.caption("Ce bloc revient à 0 quand vous cochez 'Payé' dans le tableau.")
 
-    with col_duo:
-        st.subheader("👯 Reste à payer à Julie")
-        st.success(f"Montant du virement à faire : **{max(0, benef_brut_en_cours/2):.2f} €**")
-        st.caption("Calculé sur le bénéfice brut (Ventes - Achats) / 2.")
+    with col_imp:
+        total_impots = ca_historique * 0.22
+        st.error(f"🏦 Impôts Totaux (22% du CA) : **{total_impots:.2f} €**")
+        st.caption(f"Soit {total_impots/2:.2f} € par personne sur l'année.")
 
     st.divider()
     
     # --- GRAPHIQUE GLOBAL ---
     if not df_all.empty:
-        st.subheader("📈 Évolution du Bénéfice Global (Historique)")
+        st.subheader("📈 Courbe de croissance globale")
         df_all['Date'] = pd.to_datetime(df_all['Date'])
         df_global = df_all.sort_values("Date").copy()
         df_global['Cumul'] = df_global['Montant'].cumsum()
         fig_global = px.area(df_global, x="Date", y="Cumul", color_discrete_sequence=['#636EFA'])
         st.plotly_chart(fig_global, use_container_width=True)
 
-    # --- TABLEAU ET MODIFS ---
+    # --- TABLEAU DES TRANSACTIONS ---
     st.subheader("📑 Historique des transactions")
     edited_df = st.data_editor(
         df_all,
@@ -100,7 +98,10 @@ with tab1:
 
 with tab2:
     st.subheader("🏆 Score Julie")
-    st.write(f"Bénéfice total historique encaissé : **{argent_perso_historique:.2f} €**")
+    # Argent perso (Toutes les ventes payées - Tous les achats historiques) / 2
+    ventes_payees = df_all[(df_all["Montant"] > 0) & (df_all["Payé"] == True)]["Montant"].sum() if not df_all.empty else 0
+    argent_julie = (ventes_payees - achats_historique) / 2
+    st.write(f"Bénéfice historique encaissé : **{argent_julie:.2f} €**")
     
     if not df_all.empty:
         df_j = df_all.sort_values("Date").copy()
@@ -111,7 +112,8 @@ with tab2:
 
 with tab3:
     st.subheader("🏆 Score Mathéo")
-    st.write(f"Bénéfice total historique encaissé : **{argent_perso_historique:.2f} €**")
+    argent_matheo = (ventes_payees - achats_historique) / 2
+    st.write(f"Bénéfice historique encaissé : **{argent_matheo:.2f} €**")
     
     if not df_all.empty:
         df_m = df_all.sort_values("Date").copy()
