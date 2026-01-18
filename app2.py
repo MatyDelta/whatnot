@@ -19,11 +19,18 @@ df_all = load_data()
 
 # --- NETTOYAGE DES DONNÉES ---
 if not df_all.empty:
-    df_all['Date'] = pd.to_datetime(df_all['Date'])
+    # 1. Supprime les lignes complètement vides du Sheets
+    df_all = df_all.dropna(how='all')
+    
+    # 2. Transforme la date (errors='coerce' transforme les mauvaises dates en "Vide" au lieu de planter)
+    df_all['Date'] = pd.to_datetime(df_all['Date'], errors='coerce')
+    
+    # 3. Supprime les lignes où la date est devenue vide (lignes de titres en trop, etc.)
+    df_all = df_all.dropna(subset=['Date'])
+    
+    # 4. Nettoie les montants et le Payé
     df_all['Montant'] = pd.to_numeric(df_all['Montant'], errors='coerce').fillna(0)
-    # Gère le format du "Payé" venant de Sheets
     df_all['Payé'] = df_all['Payé'].astype(str).str.lower().isin(['true', '1', 'yes', 'vrai', 'checked'])
-
 # --- BARRE LATÉRALE ---
 st.sidebar.header("📝 Saisir une opération")
 type_op = st.sidebar.selectbox("Nature", ["Vente (Gain net Whatnot)", "Achat Stock (Dépense)"])
