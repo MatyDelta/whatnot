@@ -22,16 +22,18 @@ if not df_all.empty:
     # 1. Supprime les lignes totalement vides
     df_all = df_all.dropna(how='all')
     
-    # 2. Transforme la colonne Date et ignore les erreurs (les transforme en NaT)
+    # 2. Transforme la date
     df_all['Date'] = pd.to_datetime(df_all['Date'], errors='coerce')
-    
-    # 3. Supprime les lignes où la date est invalide ou vide
     df_all = df_all.dropna(subset=['Date'])
     
-    # 4. Nettoyage des montants et de la colonne Payé
+    # 3. Nettoyage des montants
     df_all['Montant'] = pd.to_numeric(df_all['Montant'], errors='coerce').fillna(0)
+    
+    # 4. TRANSFORMATION STRICTE EN BOOLÉEN (Correctif pour l'erreur APIException)
+    # On force d'abord tout en texte, puis on vérifie si c'est "vrai"
     df_all['Payé'] = df_all['Payé'].astype(str).str.lower().isin(['true', '1', 'yes', 'vrai', 'checked'])
-
+    # On s'assure que le type final est bien bool (Vrai/Faux)
+    df_all['Payé'] = df_all['Payé'].astype(bool)
 # --- BARRE LATÉRALE ---
 st.sidebar.header("📝 Saisir une opération")
 type_op = st.sidebar.selectbox("Nature", ["Vente (Gain net Whatnot)", "Achat Stock (Dépense)"])
