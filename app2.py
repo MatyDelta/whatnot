@@ -14,19 +14,28 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def load_data():
     data = conn.read(ttl="0s")
     if data is not None and not data.empty:
-        # Nettoyage pour éviter les erreurs
+        # Nettoyage des lignes fantômes
         data = data.dropna(how='all')
+        
+        # Sécurité Dates
         data['Date'] = pd.to_datetime(data['Date'], errors='coerce')
         data = data.dropna(subset=['Date'])
+        
+        # Sécurité Montants
         data['Montant'] = pd.to_numeric(data['Montant'], errors='coerce').fillna(0)
-        # Conversion stricte du booléen pour les cases à cocher
-        data['Payé'] = data['Payé'].astype(str).str.lower().str.strip().isin(['true', '1', 'vrai', 'checked', 'x', 'true.0'])
-        data['Payé'] = data['Payé'].astype(bool)
+        
+        # SÉCURITÉ BOULÉENNE (La clé du problème)
+        # On s'assure que tout ce qui n'est pas explicitement "vrai" devient False
+        def force_bool(val):
+            s = str(val).lower().strip()
+            return s in ['true', '1', 'vrai', 'checked', 'x', 'yes']
+        
+        data['Payé'] = data['Payé'].apply(force_bool).astype(bool)
     return data
 
 df_all = load_data()
 
-# --- BARRE LATÉRALE : SAISIE ---
+# --- BARRE LATÉRALE ---
 st.sidebar.header("📝 Saisir une opération")
 type_op = st.sidebar.selectbox("Nature", ["Vente (Gain net Whatnot)", "Achat Stock (Dépense)"])
 desc = st.sidebar.text_input("Description")
@@ -41,48 +50,48 @@ if st.sidebar.button("Enregistrer"):
         "Description": desc, 
         "Montant": valeur, 
         "Année": str(date_op.year),
-        "Payé": False # Par défaut, une nouvelle vente n'est pas payée
+        "Payé": False 
     }])
     updated_df = pd.concat([df_all, new_row], ignore_index=True)
     conn.update(data=updated_df)
     st.sidebar.success("Enregistré !")
     st.rerun()
 
-# --- CALCULS DE LOGIQUE ---
+# --- LOGIQUE DE CALCUL (PRÉCISE) ---
 
-# 1. Total des achats (Stock) - Toujours déduit
-total_achats = abs(df_all[df_all["Montant"] < 0]["Montant"].sum()) if not df_all.empty else 0
+# 1. On sépare les dépenses (toujours partagées)
+total_achats = abs(df_all[df_all["Montant"] < 0]["Montant"].sum())
 
-# 2. Reste à partager (Ventes NON COCHÉES)
-df_non_paye = df_all[(df_all["Montant"] > 0) & (df_all["Payé"] == False)]
-reste_a_partager = df_non_paye["Montant"].sum()
+# 2. Reste à partager (Ventes avec Payé == False)
+ventes_en_attente = df_all[(df_all["Montant"] > 0) & (df_all["Payé"] == False)]["Montant"].sum()
 
-# 3. Bénéfice déjà encaissé (Ventes COCHÉES - Achats)
-df_paye = df_all[(df_all["Montant"] > 0) & (df_all["Payé"] == True)]
-ventes_payees_total = df_paye["Montant"].sum()
-benefice_deja_distribue = ventes_payees_total - total_achats
+# 3. Bénéfice Encaissé (Ventes avec Payé == True)
+ventes_payees = df_all[(df_all["Montant"] > 0) & (df_all["Payé"] == True)]["Montant"].sum()
+
+# Formule du bénéfice partagé final
+benefice_net_total = ventes_payees - total_achats
 
 # --- ONGLETS ---
-tab1, tab2, tab3 = st.tabs(["📊 Stats & Régularisation", "👩‍💻 Compte Julie", "👨‍💻 Compte Mathéo"])
+tab1, tab2, tab3 = st.tabs(["📊 Stats & Régularisation", "👩‍💻 Julie", "👨‍💻 Mathéo"])
 
 with tab1:
-    st.subheader("📈 Performance & Paiements")
+    st.subheader("💰 Suivi des Paiements")
     
-    # Section "Reste à partager"
     col_pay, col_imp = st.columns(2)
     with col_pay:
-        st.success(f"💰 Reste à partager : **{reste_a_partager:.2f} €**")
-        st.write(f"👉 Verser à Julie : **{(reste_a_partager/2):.2f} €**")
-        st.caption("Une fois le virement fait, cochez 'Payé' ci-dessous et sauvegardez.")
+        # Affiche 400€ si une vente de 400 n'est pas cochée
+        st.success(f"💰 Reste à partager : **{ventes_en_attente:.2f} €**")
+        # Affiche 200€
+        st.write(f"👉 Verser à Julie : **{(ventes_en_attente/2):.2f} €**")
+        st.caption("Dès que vous cochez 'Payé' et sauvegardez, ce montant tombe à 0.")
 
     with col_imp:
         ca_total = df_all[df_all["Montant"] > 0]["Montant"].sum()
-        st.error(f"🏦 Impôts prévisionnels (22%) : **{(ca_total * 0.22):.2f} €**")
+        st.error(f"🏦 Impôts (22%) : **{(ca_total * 0.22):.2f} €**")
 
     st.divider()
 
-    # Le Tableau Éditable
-    st.subheader("📑 Historique & Validation des paiements")
+    st.subheader("📑 Historique")
     edited_df = st.data_editor(
         df_all,
         column_config={
@@ -92,36 +101,36 @@ with tab1:
         },
         use_container_width=True,
         hide_index=True,
-        key="editor_main"
+        key="main_editor"
     )
     
     if st.button("💾 Sauvegarder les changements"):
         df_save = edited_df.copy()
         df_save['Date'] = pd.to_datetime(df_save['Date']).dt.strftime('%Y-%m-%d')
         conn.update(data=df_save)
-        st.success("Données mises à jour !")
+        st.success("Données synchronisées !")
         st.rerun()
 
 with tab2:
     st.subheader("👩‍💻 Compte Julie")
-    # Julie reçoit 50% du bénéfice encaissé (Ventes payées - Achats)
-    part_julie = benefice_deja_distribue / 2
+    # Part de Julie = (Ventes validées - Achats) / 2
+    part_julie = benefice_net_total / 2
     st.metric("Bénéfice Net Reçu", f"{part_julie:.2f} €")
     
-    st.write("### 📜 Historique de mes gains encaissés")
-    df_j = df_all[(df_all["Payé"] == True) | (df_all["Montant"] < 0)].copy()
-    if not df_j.empty:
-        df_j['Ma Part (50%)'] = df_j['Montant'] / 2
-        st.dataframe(df_j[["Date", "Description", "Ma Part (50%)"]], use_container_width=True, hide_index=True)
+    st.write("### 📜 Détails de mes gains encaissés")
+    # Affiche uniquement ce qui est payé ou ce qui est une dépense
+    df_julie = df_all[(df_all["Payé"] == True) | (df_all["Montant"] < 0)].copy()
+    if not df_julie.empty:
+        df_julie['Ma Part'] = df_julie['Montant'] / 2
+        st.table(df_julie[["Date", "Description", "Ma Part"]])
 
 with tab3:
     st.subheader("👨‍💻 Compte Mathéo")
-    # Mathéo reçoit la même chose
-    part_matheo = benefice_deja_distribue / 2
+    part_matheo = benefice_net_total / 2
     st.metric("Bénéfice Net Reçu", f"{part_matheo:.2f} €")
     
-    st.write("### 📜 Historique de mes gains encaissés")
-    df_m = df_all[(df_all["Payé"] == True) | (df_all["Montant"] < 0)].copy()
-    if not df_m.empty:
-        df_m['Ma Part (50%)'] = df_m['Montant'] / 2
-        st.dataframe(df_m[["Date", "Description", "Ma Part (50%)"]], use_container_width=True, hide_index=True)
+    st.write("### 📜 Détails de mes gains encaissés")
+    df_matheo = df_all[(df_all["Payé"] == True) | (df_all["Montant"] < 0)].copy()
+    if not df_matheo.empty:
+        df_matheo['Ma Part'] = df_matheo['Montant'] / 2
+        st.table(df_matheo[["Date", "Description", "Ma Part"]])
