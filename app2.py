@@ -12,25 +12,26 @@ st.title("🤝 Gestion Duo Mathéo & Julie")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
-    # Lit les données et force le rafraîchissement à chaque action
+    # ttl="0s" force l'app à lire les dernières données du Sheets à chaque refresh
     return conn.read(ttl="0s")
 
 df_all = load_data()
 
-# --- NETTOYAGE DES DONNÉES ---
+# --- NETTOYAGE DES DONNÉES (POUR ÉVITER LES ERREURS DE DATE) ---
 if not df_all.empty:
-    # 1. Supprime les lignes complètement vides du Sheets
+    # 1. Supprime les lignes totalement vides
     df_all = df_all.dropna(how='all')
     
-    # 2. Transforme la date (errors='coerce' transforme les mauvaises dates en "Vide" au lieu de planter)
+    # 2. Transforme la colonne Date et ignore les erreurs (les transforme en NaT)
     df_all['Date'] = pd.to_datetime(df_all['Date'], errors='coerce')
     
-    # 3. Supprime les lignes où la date est devenue vide (lignes de titres en trop, etc.)
+    # 3. Supprime les lignes où la date est invalide ou vide
     df_all = df_all.dropna(subset=['Date'])
     
-    # 4. Nettoie les montants et le Payé
+    # 4. Nettoyage des montants et de la colonne Payé
     df_all['Montant'] = pd.to_numeric(df_all['Montant'], errors='coerce').fillna(0)
     df_all['Payé'] = df_all['Payé'].astype(str).str.lower().isin(['true', '1', 'yes', 'vrai', 'checked'])
+
 # --- BARRE LATÉRALE ---
 st.sidebar.header("📝 Saisir une opération")
 type_op = st.sidebar.selectbox("Nature", ["Vente (Gain net Whatnot)", "Achat Stock (Dépense)"])
@@ -48,7 +49,7 @@ if st.sidebar.button("Enregistrer"):
         "Année": str(date_op.year),
         "Payé": False
     }])
-    # Ajout à l'existant et envoi vers Google Sheets
+    # Fusion avec l'existant et envoi au Cloud
     updated_df = pd.concat([df_all, new_row], ignore_index=True)
     conn.update(data=updated_df)
     st.sidebar.success("Enregistré sur Google Sheets !")
@@ -60,9 +61,11 @@ achats_historique = abs(df_all[df_all["Montant"] < 0]["Montant"].sum()) if not d
 benefice_historique = ca_historique - achats_historique
 
 # --- CALCULS DE PAIEMENT (BASÉS SUR LA COLONNE PAYÉ) ---
+# Ce bloc calcule ce qui n'est pas encore coché "Payé"
 df_en_attente = df_all[df_all["Payé"] == False] if not df_all.empty else pd.DataFrame()
 ca_en_attente = df_en_attente[df_en_attente["Montant"] > 0]["Montant"].sum() if not df_en_attente.empty else 0
 achats_en_attente = abs(df_en_attente[df_en_attente["Montant"] < 0]["Montant"].sum()) if not df_en_attente.empty else 0
+# Bénéfice net à partager qui se remet à zéro une fois les ventes payées
 benefice_net_partageable = ca_en_attente - achats_en_attente
 
 # --- ORGANISATION EN ONGLETS ---
@@ -83,7 +86,7 @@ with tab1:
     with col_pay:
         st.success(f"💰 Reste à partager : **{max(0, benefice_net_partageable):.2f} €**")
         st.write(f"👉 Verser à Julie : **{(max(0, benefice_net_partageable)/2):.2f} €**")
-        st.caption("Ce bloc revient à 0 quand vous cochez 'Payé' dans le tableau.")
+        st.caption("Ce bloc revient à 0 quand vous cochez 'Payé' dans le tableau ci-dessous.")
 
     with col_imp:
         total_impots = ca_historique * 0.22
@@ -99,6 +102,7 @@ with tab1:
         st.plotly_chart(fig_global, use_container_width=True)
 
     st.subheader("📑 Historique des transactions")
+    # L'éditeur permet de cocher "Payé" directement
     edited_df = st.data_editor(
         df_all,
         column_config={"Payé": st.column_config.CheckboxColumn("Payé ?"), "Année": None},
@@ -109,17 +113,19 @@ with tab1:
     )
     if st.button("💾 Sauvegarder les changements"):
         conn.update(data=edited_df)
-        st.success("Modifications synchronisées avec Google Sheets !")
+        st.success("Modifications synchronisées avec le Sheets !")
         st.rerun()
 
 with tab2:
     st.subheader("🏆 Score Julie")
+    # Score = (Ventes payées - Tous les achats) / 2
     ventes_payees = df_all[(df_all["Montant"] > 0) & (df_all["Payé"] == True)]["Montant"].sum() if not df_all.empty else 0
     argent_julie = (ventes_payees - achats_historique) / 2
     st.write(f"Bénéfice historique encaissé : **{argent_julie:.2f} €**")
     
     if not df_all.empty:
         df_j = df_all.sort_values("Date").copy()
+        # On calcule le gain perso : moitié du montant si achat OU si vente payée
         df_j['Gain_J'] = df_j.apply(lambda x: (x['Montant']/2) if (x['Montant'] < 0 or x['Payé'] == True) else 0, axis=1)
         df_j['Cumul_J'] = df_j['Gain_J'].cumsum()
         fig_j = px.line(df_j, x="Date", y="Cumul_J", title="Progression de Julie", markers=True, color_discrete_sequence=['#FF66C4'])
