@@ -1,158 +1,170 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 from datetime import datetime
+from streamlit_gsheets import GSheetsConnection
+from PIL import Image
+import pytesseract
+import re
 
-# ================= CONFIG =================
-st.set_page_config("MJTGC – Live Tracker", layout="wide")
+# --- CONFIGURATION ---
+st.set_page_config(page_title="Whatnot Duo Tracker MJTGC", layout="wide")
+st.title("🤝 MJTGC - Whatnot Duo Tracker")
 
-TAUX_IMPOT = 0.22
-PALIERS = [1000, 5000, 10000, 20000]
+# --- LIAISON GOOGLE SHEETS ---
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-# ================= DATA =================
-@st.cache_data
+# --- FONCTIONS TECHNIQUES ---
+
+def simple_ocr(image):
+    """Analyse l'image pour extraire Date, Magasin et Prix"""
+    text = pytesseract.image_to_string(image)
+    
+    # Cherche un montant (ex: 12.34 ou 12,34)
+    prices = re.findall(r"(\d+[\.,]\d{2})", text)
+    price = float(prices[-1].replace(',', '.')) if prices else 0.0
+    
+    # Cherche une date (JJ/MM/AAAA)
+    dates = re.findall(r"(\d{2}/\d{2}/\d{4})", text)
+    date_found = pd.to_datetime(dates[0], dayfirst=True) if dates else datetime.now()
+    
+    # Nom du magasin (prend la 1ère ligne du ticket)
+    lines = [l.strip() for l in text.split('\n') if l.strip()]
+    name = lines[0][:20] if lines else "Ticket Scan"
+    
+    return date_found, name, price
+
 def load_data():
-    try:
-        df = pd.read_csv("data.csv")
-    except:
-        df = pd.DataFrame(columns=[
-            "DATE", "LIVE_ID", "TYPE", "DESCRIPTION",
-            "MONTANT", "JULIE_PAYE"
-        ])
-    return df
+    """Charge les données depuis Google Sheets"""
+    data = conn.read(ttl="0s")
+    if data is not None and not data.empty:
+        data = data.dropna(how='all')
+        data['Date'] = pd.to_datetime(data['Date'], errors='coerce')
+        data['Montant'] = pd.to_numeric(data['Montant'], errors='coerce').fillna(0)
+        data['Payé'] = data['Payé'].astype(str).str.lower().isin(['true', '1', 'vrai', 'x', 'v']).astype(bool)
+    return data
 
-def save_data(df):
-    df.to_csv("data.csv", index=False)
+# --- INITIALISATION ---
+if 'data' not in st.session_state:
+    st.session_state.data = load_data()
 
-df = load_data()
+# --- BARRE LATÉRALE (Scanner + Saisie) ---
+st.sidebar.header("📸 Scanner un Ticket")
+file = st.sidebar.file_uploader("Prendre en photo", type=['jpg', 'jpeg', 'png'])
 
-# ================= CALCULS =================
-def calcul_par_live(df):
-    lives = []
+if file:
+    img = Image.open(file)
+    if st.sidebar.button("Analyser le ticket"):
+        s_date, s_name, s_price = simple_ocr(img)
+        # Stockage en mémoire pour pré-remplir les champs
+        st.session_state['scan_date'] = s_date
+        st.session_state['scan_name'] = s_name
+        st.session_state['scan_price'] = s_price
+        st.sidebar.success("Analyse terminée !")
 
-    for live_id, d in df.groupby("LIVE_ID"):
-        ventes = d[d["TYPE"] == "vente"]["MONTANT"].sum()
-        depenses = d[d["TYPE"] == "depense"]["MONTANT"].sum()
-        benefice = ventes - depenses
+st.sidebar.divider()
+st.sidebar.header("📝 Saisir une opération")
 
-        julie_due = benefice / 2
-        julie_paye = d["JULIE_PAYE"].sum()
+# Utilisation des données scannées si elles existent, sinon valeurs par défaut
+date_op = st.sidebar.date_input("Date", st.session_state.get('scan_date', datetime.now()))
+type_op = st.sidebar.selectbox("Nature", ["Vente (Gain net Whatnot)", "Achat Stock (Dépense)"])
+desc = st.sidebar.text_input("Description", st.session_state.get('scan_name', ""))
+montant = st.sidebar.number_input("Montant (€)", min_value=0.0, step=1.0, value=st.session_state.get('scan_price', 0.0))
 
-        if julie_paye >= julie_due:
-            statut = "Payé"
-        elif julie_paye > 0:
-            statut = "Partiel"
-        else:
-            statut = "En attente"
+if st.sidebar.button("Enregistrer l'opération"):
+    valeur = montant if "Vente" in type_op else -montant
+    new_row = pd.DataFrame([{
+        "Date": pd.to_datetime(date_op), 
+        "Type": type_op, 
+        "Description": desc, 
+        "Montant": valeur, 
+        "Année": str(date_op.year),
+        "Payé": False
+    }])
+    st.session_state.data = pd.concat([st.session_state.data, new_row], ignore_index=True)
+    
+    # Sauvegarde vers Google Sheets
+    df_save = st.session_state.data.copy()
+    df_save['Date'] = df_save['Date'].dt.strftime('%Y-%m-%d')
+    conn.update(data=df_save)
+    
+    # Nettoyage de la mémoire du scan après enregistrement
+    for key in ['scan_date', 'scan_name', 'scan_price']:
+        if key in st.session_state: del st.session_state[key]
+        
+    st.sidebar.success("Enregistré et synchronisé !")
+    st.rerun()
 
-        matheo = julie_due if statut == "Payé" else 0
+# --- LOGIQUE DE CALCUL MJTGC ---
+df_all = st.session_state.data.sort_values("Date").reset_index(drop=True)
 
-        lives.append({
-            "LIVE_ID": live_id,
-            "CA_BRUT": ventes,
-            "DEPENSES": depenses,
-            "BENEFICE": benefice,
-            "JULIE_DUE": julie_due,
-            "JULIE_PAYE": julie_paye,
-            "STATUT_JULIE": statut,
-            "MATHEO": matheo
+# 1. Calcul des Lives (Groupement par 2)
+lives_history = []
+i = 0
+while i < len(df_all) - 1:
+    curr = df_all.iloc[i]
+    nxt = df_all.iloc[i+1]
+    if (curr['Montant'] * nxt['Montant']) < 0:
+        gain_net = curr['Montant'] + nxt['Montant']
+        lives_history.append({
+            "Date": nxt['Date'],
+            "Détails": f"{curr['Description']} + {nxt['Description']}",
+            "Investissement": min(curr['Montant'], nxt['Montant']),
+            "Vente": max(curr['Montant'], nxt['Montant']),
+            "Bénéfice Net": gain_net
         })
+        i += 2
+    else:
+        i += 1
+df_lives = pd.DataFrame(lives_history)
 
-    return pd.DataFrame(lives)
+# 2. Variables de performance
+ca_historique = df_all[df_all["Montant"] > 0]["Montant"].sum()
+achats_historique = abs(df_all[df_all["Montant"] < 0]["Montant"].sum())
+gains_non_payes = df_all[(df_all["Montant"] > 0) & (df_all["Payé"] == False)]["Montant"].sum()
+gains_valides = df_all[(df_all["Montant"] > 0) & (df_all["Payé"] == True)]["Montant"].sum()
 
-df_live = calcul_par_live(df)
+# --- ONGLETS ---
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Stats & Régul", "🎬 Historique Lives", "👩‍💻 Julie", "👨‍💻 Mathéo"])
 
-CA_BRUT = df[df["TYPE"] == "vente"]["MONTANT"].sum()
-DEPENSES = df[df["TYPE"] == "depense"]["MONTANT"].sum()
-BENEFICE_NET = CA_BRUT - DEPENSES
-IMPOTS = CA_BRUT * TAUX_IMPOT
-
-# ================= UI =================
-st.title("💎 MJTGC – Whatnot Live Tracker")
-
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📊 Dashboard",
-    "🎥 Historique Lives",
-    "👩 Julie",
-    "👨 Mathéo"
-])
-
-# ================= DASHBOARD =================
 with tab1:
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("💰 CA Brut", f"{CA_BRUT:.2f} €")
-    c2.metric("💸 Dépenses", f"{DEPENSES:.2f} €")
-    c3.metric("💎 Bénéfice Net", f"{BENEFICE_NET:.2f} €")
-    c4.metric("🧾 Impôts estimés", f"{IMPOTS:.2f} €")
+    st.subheader("📈 Performance Totale")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("CA Total", f"{ca_historique:.2f} €")
+    c2.metric("Total Achats", f"-{achats_historique:.2f} €")
+    c3.metric("Bénéfice Brut", f"{(ca_historique - achats_historique):.2f} €")
+    
+    st.divider()
+    st.subheader("💳 Paiements en cours")
+    col_pay, col_ver = st.columns(2)
+    with col_pay:
+        st.success(f"💰 Gains à partager : **{gains_non_payes:.2f} €**")
+    with col_ver:
+        st.info(f"👉 Verser à Julie (50%) : **{(gains_non_payes/2):.2f} €**")
 
-    for p in PALIERS:
-        st.progress(min(CA_BRUT / p, 1.0))
-        st.write(f"🎯 Objectif {p} €")
+    st.divider()
+    st.subheader("📑 Toutes les transactions")
+    edited_df = st.data_editor(df_all, use_container_width=True, hide_index=True, key="editor", num_rows="dynamic")
+    if st.button("💾 Sauvegarder les modifications"):
+        st.session_state.data = edited_df
+        df_save = edited_df.copy()
+        df_save['Date'] = pd.to_datetime(df_save['Date']).dt.strftime('%Y-%m-%d')
+        conn.update(data=df_save)
+        st.rerun()
 
-# ================= HISTORIQUE LIVES =================
 with tab2:
-    st.subheader("🎥 Résumé par Live")
-    st.dataframe(df_live, use_container_width=True)
+    st.subheader("🍿 Rentabilité par Live")
+    if not df_lives.empty:
+        st.dataframe(df_lives, use_container_width=True, hide_index=True)
+        fig = px.bar(df_lives, x="Date", y="Bénéfice Net", color="Bénéfice Net")
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Ajoutez un achat et une vente pour voir le calcul.")
 
-# ================= JULIE =================
 with tab3:
-    total_due = df_live["JULIE_DUE"].sum()
-    total_paye = df_live["JULIE_PAYE"].sum()
+    st.subheader("🏆 Score Julie")
+    st.metric("Total encaissé (Validé)", f"{(gains_valides / 2):.2f} €")
 
-    st.metric("💰 Total dû", f"{total_due:.2f} €")
-    st.metric("✅ Total payé", f"{total_paye:.2f} €")
-    st.progress(total_paye / total_due if total_due else 0)
-
-    st.subheader("💳 Remboursements")
-    for i, row in df_live.iterrows():
-        if row["STATUT_JULIE"] != "Payé":
-            with st.expander(f"Live {row['LIVE_ID']} – {row['STATUT_JULIE']}"):
-                montant = st.number_input(
-                    "Montant remboursé",
-                    min_value=0.0,
-                    step=1.0,
-                    key=f"julie_{i}"
-                )
-                if st.button("💸 Rembourser", key=f"btn_{i}"):
-                    df.loc[len(df)] = [
-                        datetime.now().date(),
-                        row["LIVE_ID"],
-                        "remboursement",
-                        "Remboursement Julie",
-                        0,
-                        montant
-                    ]
-                    save_data(df)
-                    st.experimental_rerun()
-
-# ================= MATHEO =================
 with tab4:
-    matheo_total = df_live["MATHEO"].sum()
-    st.metric("💰 Disponible", f"{matheo_total:.2f} €")
-
-    st.dataframe(
-        df_live[df_live["STATUT_JULIE"] == "Payé"]
-        [["LIVE_ID", "MATHEO"]],
-        use_container_width=True
-    )
-
-# ================= AJOUT OPERATION =================
-st.sidebar.subheader("➕ Nouvelle opération")
-
-with st.sidebar.form("add"):
-    live = st.text_input("Live ID")
-    type_op = st.selectbox("Type", ["vente", "depense"])
-    desc = st.text_input("Description")
-    montant = st.number_input("Montant", min_value=0.0)
-    submit = st.form_submit_button("Ajouter")
-
-    if submit:
-        df.loc[len(df)] = [
-            datetime.now().date(),
-            live,
-            type_op,
-            desc,
-            montant,
-            0
-        ]
-        save_data(df)
-        st.experimental_rerun()
+    st.subheader("🏆 Score Mathéo")
+    st.metric("Total encaissé (Validé)", f"{(gains_valides / 2):.2f} €")
