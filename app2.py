@@ -2,350 +2,624 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime
+from datetime import datetime, timedelta
 from streamlit_gsheets import GSheetsConnection
 from PIL import Image
 import pytesseract
 import re
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="MJTGC Whatnot Tracker Pro", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(
+    page_title="MJTGC Whatnot Pro", 
+    layout="wide", 
+    initial_sidebar_state="expanded",
+    page_icon="💎"
+)
 
-# --- STYLES CSS ---
+# --- STYLES PERSONNALISÉS ---
 st.markdown("""
 <style>
-    .metric-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    .big-font {font-size: 24px !important; font-weight: bold;}
+    .metric-positive {color: #10b981; font-size: 28px; font-weight: bold;}
+    .metric-negative {color: #ef4444; font-size: 28px; font-weight: bold;}
+    .metric-pending {color: #f59e0b; font-size: 28px; font-weight: bold;}
+    .card {
+        background: white;
         padding: 20px;
         border-radius: 10px;
-        color: white;
-        text-align: center;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        margin: 10px 0;
     }
-    .positive {color: #10b981; font-weight: bold;}
-    .negative {color: #ef4444; font-weight: bold;}
-    .pending {color: #f59e0b; font-weight: bold;}
+    .stButton>button {
+        border-radius: 8px;
+        font-weight: 600;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🤝 MJTGC - Whatnot Duo Tracker Pro")
+# --- TITRE ---
+col_title, col_refresh = st.columns([6, 1])
+with col_title:
+    st.title("💎 MJTGC - Whatnot Tracker Pro")
+with col_refresh:
+    if st.button("🔄", help="Rafraîchir les données", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
 
 # --- CONNEXION GOOGLE SHEETS ---
-conn = st.connection("gsheets", type=GSheetsConnection)
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+except Exception as e:
+    st.error(f"❌ Erreur de connexion Google Sheets : {e}")
+    st.stop()
 
-# --- FONCTIONS OCR ---
-def simple_ocr(image):
-    """Extraction intelligente de données depuis un ticket"""
-    text = pytesseract.image_to_string(image)
-    
-    prices = re.findall(r"(\d+[\.,]\d{2})", text)
-    price = float(prices[-1].replace(',', '.')) if prices else 0.0
-    
-    dates = re.findall(r"(\d{2}/\d{2}/\d{4})", text)
-    date_found = pd.to_datetime(dates[0], dayfirst=True) if dates else datetime.now()
-    
-    lines = [l.strip() for l in text.split('\n') if l.strip()]
-    name = lines[0][:30] if lines else "Scan Ticket"
-    
-    return date_found, name, price
+# --- FONCTION OCR AMÉLIORÉE ---
+def extract_ticket_data(image):
+    """Extraction intelligente des données d'un ticket de caisse"""
+    try:
+        text = pytesseract.image_to_string(image, lang='fra')
+        
+        # Extraction du prix (dernier montant trouvé = souvent le total)
+        prices = re.findall(r"(\d+[,\.]\d{2})", text)
+        price = float(prices[-1].replace(',', '.')) if prices else 0.0
+        
+        # Extraction de la date
+        date_patterns = [
+            r"(\d{2}[/\-\.]\d{2}[/\-\.]\d{4})",  # JJ/MM/AAAA
+            r"(\d{2}[/\-\.]\d{2}[/\-\.]\d{2})"    # JJ/MM/AA
+        ]
+        date_found = datetime.now()
+        for pattern in date_patterns:
+            dates = re.findall(pattern, text)
+            if dates:
+                try:
+                    date_found = pd.to_datetime(dates[0], dayfirst=True)
+                    break
+                except:
+                    continue
+        
+        # Extraction du nom du magasin (première ligne non vide)
+        lines = [l.strip() for l in text.split('\n') if l.strip() and len(l.strip()) > 3]
+        store_name = lines[0][:40] if lines else "Ticket scanné"
+        
+        return date_found, store_name, price
+    except Exception as e:
+        st.error(f"Erreur OCR : {e}")
+        return datetime.now(), "Ticket scanné", 0.0
 
 # --- CHARGEMENT DES DONNÉES ---
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=10)
 def load_data():
-    """Charge et nettoie les données depuis Google Sheets"""
-    data = conn.read(ttl="0s")
-    if data is not None and not data.empty:
+    """Charge et prépare les données depuis Google Sheets"""
+    try:
+        data = conn.read(ttl="0s")
+        
+        if data is None or data.empty:
+            # Création d'un DataFrame vide avec la structure correcte
+            return pd.DataFrame(columns=[
+                'Date', 'Type', 'Description', 'Montant', 'Montant_Part',
+                'Statut_Julie', 'Statut_Matheo', 'Date_Remb_Julie', 
+                'Date_Remb_Matheo', 'Année', 'Notes'
+            ])
+        
+        # Nettoyage des lignes vides
         data = data.dropna(how='all')
+        
+        # Conversion des types
         data['Date'] = pd.to_datetime(data['Date'], errors='coerce')
         data['Montant'] = pd.to_numeric(data['Montant'], errors='coerce').fillna(0)
         
-        # Nouvelles colonnes de remboursement
-        if 'Statut_Julie' not in data.columns:
-            data['Statut_Julie'] = 'En attente'
-        if 'Statut_Matheo' not in data.columns:
-            data['Statut_Matheo'] = 'En attente'
-        if 'Date_Remb_Julie' not in data.columns:
-            data['Date_Remb_Julie'] = None
-        if 'Date_Remb_Matheo' not in data.columns:
-            data['Date_Remb_Matheo'] = None
-        if 'Montant_Part' not in data.columns:
-            data['Montant_Part'] = data['Montant'] / 2
-            
+        # Ajout des colonnes manquantes
+        required_cols = {
+            'Montant_Part': lambda: data['Montant'] / 2,
+            'Statut_Julie': 'En attente',
+            'Statut_Matheo': 'En attente',
+            'Date_Remb_Julie': None,
+            'Date_Remb_Matheo': None,
+            'Année': lambda: data['Date'].dt.year.astype(str),
+            'Notes': ''
+        }
+        
+        for col, default in required_cols.items():
+            if col not in data.columns:
+                data[col] = default() if callable(default) else default
+        
+        # Conversion des dates de remboursement
         data['Date_Remb_Julie'] = pd.to_datetime(data['Date_Remb_Julie'], errors='coerce')
         data['Date_Remb_Matheo'] = pd.to_datetime(data['Date_Remb_Matheo'], errors='coerce')
         
-    return data
+        return data
+    
+    except Exception as e:
+        st.error(f"❌ Erreur lors du chargement : {e}")
+        return pd.DataFrame()
 
-# --- INITIALISATION ---
-if 'data' not in st.session_state or st.button("🔄 Rafraîchir", key="refresh_top"):
+# --- SAUVEGARDE DES DONNÉES ---
+def save_data(dataframe):
+    """Sauvegarde les données vers Google Sheets"""
+    try:
+        df_save = dataframe.copy()
+        df_save['Date'] = pd.to_datetime(df_save['Date']).dt.strftime('%Y-%m-%d')
+        df_save['Date_Remb_Julie'] = pd.to_datetime(df_save['Date_Remb_Julie'], errors='coerce').dt.strftime('%Y-%m-%d')
+        df_save['Date_Remb_Matheo'] = pd.to_datetime(df_save['Date_Remb_Matheo'], errors='coerce').dt.strftime('%Y-%m-%d')
+        
+        conn.update(data=df_save)
+        return True
+    except Exception as e:
+        st.error(f"❌ Erreur de sauvegarde : {e}")
+        return False
+
+# --- INITIALISATION SESSION STATE ---
+if 'data' not in st.session_state:
     st.session_state.data = load_data()
 
 df = st.session_state.data
 
-# --- SIDEBAR : SAISIE ---
+# --- SIDEBAR : SAISIE ET SCAN ---
 with st.sidebar:
-    st.header("📸 Scanner un Ticket")
-    file = st.file_uploader("Prendre en photo", type=['jpg', 'jpeg', 'png'])
+    st.markdown("## 📸 Scanner un Ticket")
     
-    if file:
-        img = Image.open(file)
-        st.image(img, width=250)
-        if st.button("🔍 Analyser"):
-            s_date, s_name, s_price = simple_ocr(img)
-            st.session_state['scan_date'] = s_date
-            st.session_state['scan_name'] = s_name
-            st.session_state['scan_price'] = s_price
-            st.success("✅ Ticket analysé !")
+    uploaded_file = st.file_uploader(
+        "Prendre une photo du ticket", 
+        type=['jpg', 'jpeg', 'png'],
+        help="Prenez une photo claire du ticket"
+    )
+    
+    if uploaded_file:
+        img = Image.open(uploaded_file)
+        st.image(img, caption="Aperçu", use_container_width=True)
+        
+        if st.button("🔍 Analyser le ticket", use_container_width=True):
+            with st.spinner("Analyse en cours..."):
+                scan_date, scan_name, scan_price = extract_ticket_data(img)
+                st.session_state['scan_date'] = scan_date
+                st.session_state['scan_name'] = scan_name
+                st.session_state['scan_price'] = scan_price
+                st.success("✅ Analyse terminée !")
+                st.balloons()
     
     st.divider()
-    st.header("➕ Nouvelle Opération")
+    st.markdown("## ➕ Nouvelle Opération")
     
-    date_op = st.date_input("📅 Date", st.session_state.get('scan_date', datetime.now()))
-    type_op = st.selectbox("🏷️ Type", ["💰 Vente Whatnot", "🛒 Achat Stock", "💸 Frais", "🔄 Remboursement"])
-    desc = st.text_input("📝 Description", st.session_state.get('scan_name', ""))
-    montant = st.number_input("💵 Montant (€)", min_value=0.0, step=0.01, value=st.session_state.get('scan_price', 0.0))
+    # Formulaire de saisie
+    with st.form("new_operation", clear_on_submit=True):
+        date_input = st.date_input(
+            "📅 Date",
+            value=st.session_state.get('scan_date', datetime.now()),
+            max_value=datetime.now()
+        )
+        
+        type_input = st.selectbox(
+            "🏷️ Type d'opération",
+            ["💰 Vente Whatnot", "🛒 Achat Stock", "💸 Frais Divers", "🎁 Remboursement"]
+        )
+        
+        desc_input = st.text_input(
+            "📝 Description",
+            value=st.session_state.get('scan_name', ""),
+            placeholder="Ex: Live Pokémon, Achat chez Carrefour..."
+        )
+        
+        montant_input = st.number_input(
+            "💵 Montant (€)",
+            min_value=0.0,
+            step=0.01,
+            value=float(st.session_state.get('scan_price', 0.0)),
+            format="%.2f"
+        )
+        
+        notes_input = st.text_area(
+            "📌 Notes (optionnel)",
+            placeholder="Informations supplémentaires..."
+        )
+        
+        submit_btn = st.form_submit_button("💾 Enregistrer", use_container_width=True, type="primary")
+        
+        if submit_btn:
+            if desc_input and montant_input > 0:
+                # Détermination du signe du montant
+                if "Vente" in type_input or "Remboursement" in type_input:
+                    final_amount = montant_input
+                else:
+                    final_amount = -montant_input
+                
+                # Création de la nouvelle ligne
+                new_entry = pd.DataFrame([{
+                    "Date": pd.to_datetime(date_input),
+                    "Type": type_input,
+                    "Description": desc_input,
+                    "Montant": final_amount,
+                    "Montant_Part": final_amount / 2,
+                    "Statut_Julie": "En attente",
+                    "Statut_Matheo": "En attente",
+                    "Date_Remb_Julie": None,
+                    "Date_Remb_Matheo": None,
+                    "Année": str(date_input.year),
+                    "Notes": notes_input
+                }])
+                
+                # Ajout et sauvegarde
+                st.session_state.data = pd.concat([st.session_state.data, new_entry], ignore_index=True)
+                
+                if save_data(st.session_state.data):
+                    st.success("✅ Opération enregistrée avec succès !")
+                    
+                    # Reset des valeurs scannées
+                    for key in ['scan_date', 'scan_name', 'scan_price']:
+                        st.session_state.pop(key, None)
+                    
+                    st.rerun()
+            else:
+                st.error("⚠️ Veuillez remplir tous les champs obligatoires")
+
+# --- CALCULS PRINCIPAUX ---
+if not df.empty:
+    # Calculs globaux
+    total_ventes = df[df['Montant'] > 0]['Montant'].sum()
+    total_achats = abs(df[df['Montant'] < 0]['Montant'].sum())
+    benefice_net = total_ventes - total_achats
+    marge = (benefice_net / total_ventes * 100) if total_ventes > 0 else 0
     
-    if st.button("💾 Enregistrer", type="primary", use_container_width=True):
-        # Calcul du montant avec signe
-        if "Vente" in type_op:
-            valeur = montant
-        else:
-            valeur = -montant
-        
-        new_row = pd.DataFrame([{
-            "Date": pd.to_datetime(date_op),
-            "Type": type_op,
-            "Description": desc,
-            "Montant": valeur,
-            "Montant_Part": valeur / 2,
-            "Statut_Julie": "En attente",
-            "Statut_Matheo": "En attente",
-            "Date_Remb_Julie": None,
-            "Date_Remb_Matheo": None,
-            "Année": str(date_op.year)
-        }])
-        
-        st.session_state.data = pd.concat([st.session_state.data, new_row], ignore_index=True)
-        
-        # Sauvegarde
-        df_save = st.session_state.data.copy()
-        df_save['Date'] = df_save['Date'].dt.strftime('%Y-%m-%d')
-        df_save['Date_Remb_Julie'] = pd.to_datetime(df_save['Date_Remb_Julie']).dt.strftime('%Y-%m-%d')
-        df_save['Date_Remb_Matheo'] = pd.to_datetime(df_save['Date_Remb_Matheo']).dt.strftime('%Y-%m-%d')
-        conn.update(data=df_save)
-        
-        # Reset scan
-        for key in ['scan_date', 'scan_name', 'scan_price']:
-            if key in st.session_state:
-                del st.session_state[key]
-        
-        st.success("✅ Enregistré !")
-        st.rerun()
+    # Calculs Julie
+    julie_en_attente = df[df['Statut_Julie'] == 'En attente']['Montant_Part'].sum()
+    julie_paye = df[df['Statut_Julie'] == 'Payé']['Montant_Part'].sum()
+    julie_total = julie_en_attente + julie_paye
+    julie_progress = (julie_paye / julie_total * 100) if julie_total > 0 else 0
+    
+    # Calculs Mathéo
+    matheo_en_attente = df[df['Statut_Matheo'] == 'En attente']['Montant_Part'].sum()
+    matheo_paye = df[df['Statut_Matheo'] == 'Payé']['Montant_Part'].sum()
+    matheo_total = matheo_en_attente + matheo_paye
+    matheo_progress = (matheo_paye / matheo_total * 100) if matheo_total > 0 else 0
+else:
+    total_ventes = total_achats = benefice_net = marge = 0
+    julie_en_attente = julie_paye = julie_total = julie_progress = 0
+    matheo_en_attente = matheo_paye = matheo_total = matheo_progress = 0
 
-# --- CALCULS GLOBAUX ---
-ventes = df[df['Montant'] > 0]['Montant'].sum()
-achats = abs(df[df['Montant'] < 0]['Montant'].sum())
-benefice = ventes - achats
+# --- ONGLETS PRINCIPAUX ---
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📊 Dashboard", 
+    "💰 Remboursements", 
+    "👩‍💻 Julie", 
+    "👨‍💻 Mathéo", 
+    "📋 Données"
+])
 
-# Calcul par personne
-julie_en_attente = df[df['Statut_Julie'] == 'En attente']['Montant_Part'].sum()
-julie_paye = df[df['Statut_Julie'] == 'Payé']['Montant_Part'].sum()
-matheo_en_attente = df[df['Statut_Matheo'] == 'En attente']['Montant_Part'].sum()
-matheo_paye = df[df['Statut_Matheo'] == 'Payé']['Montant_Part'].sum()
-
-# --- ONGLETS ---
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Tableau de Bord", "💰 Remboursements", "👩‍💻 Julie", "👨‍💻 Mathéo", "📋 Données"])
-
-# --- TAB 1 : DASHBOARD ---
+# ========== TAB 1 : DASHBOARD ==========
 with tab1:
-    st.subheader("📈 Vue d'Ensemble")
+    st.markdown("### 📈 Performance Globale")
     
+    # Métriques principales
     col1, col2, col3, col4 = st.columns(4)
+    
     with col1:
-        st.metric("💵 CA Total", f"{ventes:.2f} €", delta=f"+{ventes/100:.0f}%" if ventes > 0 else None)
+        st.metric(
+            "💵 Chiffre d'Affaires",
+            f"{total_ventes:.2f} €",
+            delta=f"+{(total_ventes/len(df)*100):.0f}% moy." if len(df) > 0 else None
+        )
+    
     with col2:
-        st.metric("🛒 Achats", f"{achats:.2f} €", delta=f"-{achats/100:.0f}%" if achats > 0 else None)
+        st.metric(
+            "🛒 Total Achats",
+            f"{total_achats:.2f} €",
+            delta=f"-{(total_achats/total_ventes*100):.0f}%" if total_ventes > 0 else None,
+            delta_color="inverse"
+        )
+    
     with col3:
-        st.metric("💎 Bénéfice Net", f"{benefice:.2f} €", delta="Positif" if benefice > 0 else "Négatif")
+        st.metric(
+            "💎 Bénéfice Net",
+            f"{benefice_net:.2f} €",
+            delta="Positif ✅" if benefice_net > 0 else "Négatif ❌",
+            delta_color="normal" if benefice_net > 0 else "inverse"
+        )
+    
     with col4:
-        marge = (benefice / ventes * 100) if ventes > 0 else 0
-        st.metric("📊 Marge", f"{marge:.1f}%", delta="Excellent" if marge > 30 else "Normal")
+        st.metric(
+            "📊 Marge Nette",
+            f"{marge:.1f}%",
+            delta="Excellent" if marge > 30 else "Correct" if marge > 15 else "Faible"
+        )
     
     st.divider()
     
-    # Graphiques côte à côte
-    col_g1, col_g2 = st.columns(2)
-    
-    with col_g1:
-        st.subheader("📅 Évolution du CA")
-        df_month = df[df['Montant'] > 0].copy()
-        df_month['Mois'] = df_month['Date'].dt.to_period('M').astype(str)
-        monthly = df_month.groupby('Mois')['Montant'].sum().reset_index()
-        fig1 = px.line(monthly, x='Mois', y='Montant', markers=True, title="CA Mensuel")
-        fig1.update_traces(line_color='#10b981', line_width=3)
-        st.plotly_chart(fig1, use_container_width=True)
-    
-    with col_g2:
-        st.subheader("🎯 Répartition des Opérations")
-        type_counts = df['Type'].value_counts().reset_index()
-        type_counts.columns = ['Type', 'Nombre']
-        fig2 = px.pie(type_counts, values='Nombre', names='Type', hole=0.4)
-        st.plotly_chart(fig2, use_container_width=True)
+    # Graphiques
+    if not df.empty:
+        col_g1, col_g2 = st.columns(2)
+        
+        with col_g1:
+            st.markdown("#### 📅 Évolution Mensuelle du CA")
+            df_ventes = df[df['Montant'] > 0].copy()
+            df_ventes['Mois'] = df_ventes['Date'].dt.to_period('M').astype(str)
+            monthly_ca = df_ventes.groupby('Mois')['Montant'].sum().reset_index()
+            
+            fig_ca = px.area(
+                monthly_ca, 
+                x='Mois', 
+                y='Montant',
+                title="",
+                labels={'Montant': 'CA (€)', 'Mois': ''}
+            )
+            fig_ca.update_traces(line_color='#10b981', fillcolor='rgba(16, 185, 129, 0.3)')
+            fig_ca.update_layout(hovermode='x unified')
+            st.plotly_chart(fig_ca, use_container_width=True)
+        
+        with col_g2:
+            st.markdown("#### 🎯 Répartition par Type")
+            type_counts = df.groupby('Type').agg({
+                'Montant': 'sum'
+            }).reset_index()
+            type_counts['Montant_Abs'] = type_counts['Montant'].abs()
+            
+            fig_pie = px.pie(
+                type_counts, 
+                values='Montant_Abs', 
+                names='Type',
+                hole=0.4,
+                color_discrete_sequence=px.colors.qualitative.Set3
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
     
     st.divider()
     
     # Dernières opérations
-    st.subheader("🕒 5 Dernières Opérations")
-    recent = df.sort_values('Date', ascending=False).head(5)
-    st.dataframe(recent[['Date', 'Type', 'Description', 'Montant', 'Statut_Julie', 'Statut_Matheo']], 
-                 use_container_width=True, hide_index=True)
+    st.markdown("#### 🕒 Dernières Opérations")
+    if not df.empty:
+        recent_ops = df.sort_values('Date', ascending=False).head(10)
+        
+        for idx, row in recent_ops.iterrows():
+            with st.container():
+                col_date, col_desc, col_amount, col_status = st.columns([2, 4, 2, 3])
+                
+                with col_date:
+                    st.write(f"**{row['Date'].strftime('%d/%m/%Y')}**")
+                
+                with col_desc:
+                    st.write(f"{row['Type']} - {row['Description']}")
+                
+                with col_amount:
+                    if row['Montant'] > 0:
+                        st.markdown(f"<span class='metric-positive'>+{row['Montant']:.2f} €</span>", unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"<span class='metric-negative'>{row['Montant']:.2f} €</span>", unsafe_allow_html=True)
+                
+                with col_status:
+                    if row['Statut_Julie'] == 'Payé' and row['Statut_Matheo'] == 'Payé':
+                        st.success("✅ Soldé")
+                    else:
+                        st.warning("⏳ En attente")
+    else:
+        st.info("Aucune opération enregistrée pour le moment")
 
-# --- TAB 2 : REMBOURSEMENTS ---
+# ========== TAB 2 : REMBOURSEMENTS ==========
 with tab2:
-    st.subheader("💳 Gestion des Remboursements")
+    st.markdown("### 💳 Gestion des Remboursements")
     
-    col_j, col_m = st.columns(2)
+    col_julie, col_matheo = st.columns(2)
     
-    with col_j:
-        st.markdown("### 👩‍💻 Julie")
-        st.metric("En attente", f"{julie_en_attente:.2f} €", delta=None)
-        st.metric("Déjà payé", f"{julie_paye:.2f} €", delta=None)
-        st.progress(julie_paye / (julie_paye + julie_en_attente) if (julie_paye + julie_en_attente) > 0 else 0)
+    # SECTION JULIE
+    with col_julie:
+        st.markdown("#### 👩‍💻 Julie")
+        
+        # Métriques Julie
+        met_col1, met_col2 = st.columns(2)
+        with met_col1:
+            st.metric("💰 Total Dû", f"{julie_total:.2f} €")
+        with met_col2:
+            st.metric("✅ Payé", f"{julie_paye:.2f} €")
+        
+        st.metric("⏳ En Attente", f"{julie_en_attente:.2f} €", delta=f"{julie_progress:.0f}% payé")
+        st.progress(julie_progress / 100)
         
         st.divider()
-        st.markdown("#### Transactions en attente :")
+        
+        # Liste des paiements en attente
         julie_pending = df[df['Statut_Julie'] == 'En attente'].copy()
+        
         if not julie_pending.empty:
+            st.markdown(f"**{len(julie_pending)} transaction(s) en attente**")
+            
             for idx, row in julie_pending.iterrows():
-                with st.container():
-                    col_info, col_btn = st.columns([3, 1])
-                    with col_info:
-                        st.write(f"**{row['Description']}** - {row['Date'].strftime('%d/%m/%Y')}")
-                        st.write(f"<span class='pending'>💰 {row['Montant_Part']:.2f} €</span>", unsafe_allow_html=True)
-                    with col_btn:
-                        if st.button("✅ Payé", key=f"julie_{idx}"):
-                            st.session_state.data.at[idx, 'Statut_Julie'] = 'Payé'
-                            st.session_state.data.at[idx, 'Date_Remb_Julie'] = datetime.now()
-                            
-                            df_save = st.session_state.data.copy()
-                            df_save['Date'] = df_save['Date'].dt.strftime('%Y-%m-%d')
-                            df_save['Date_Remb_Julie'] = pd.to_datetime(df_save['Date_Remb_Julie']).dt.strftime('%Y-%m-%d')
-                            df_save['Date_Remb_Matheo'] = pd.to_datetime(df_save['Date_Remb_Matheo']).dt.strftime('%Y-%m-%d')
-                            conn.update(data=df_save)
+                with st.expander(f"💰 {row['Montant_Part']:.2f} € - {row['Description'][:30]}"):
+                    st.write(f"📅 Date: {row['Date'].strftime('%d/%m/%Y')}")
+                    st.write(f"🏷️ Type: {row['Type']}")
+                    st.write(f"💵 Montant total: {row['Montant']:.2f} €")
+                    st.write(f"👤 Part Julie: {row['Montant_Part']:.2f} €")
+                    
+                    if row['Notes']:
+                        st.info(f"📌 {row['Notes']}")
+                    
+                    if st.button("✅ Marquer comme Payé", key=f"julie_pay_{idx}", use_container_width=True):
+                        st.session_state.data.at[idx, 'Statut_Julie'] = 'Payé'
+                        st.session_state.data.at[idx, 'Date_Remb_Julie'] = datetime.now()
+                        
+                        if save_data(st.session_state.data):
+                            st.success("✅ Paiement enregistré !")
                             st.rerun()
         else:
-            st.success("🎉 Tout est payé !")
+            st.success("🎉 Tous les paiements sont à jour !")
     
-    with col_m:
-        st.markdown("### 👨‍💻 Mathéo")
-        st.metric("En attente", f"{matheo_en_attente:.2f} €", delta=None)
-        st.metric("Déjà payé", f"{matheo_paye:.2f} €", delta=None)
-        st.progress(matheo_paye / (matheo_paye + matheo_en_attente) if (matheo_paye + matheo_en_attente) > 0 else 0)
+    # SECTION MATHÉO
+    with col_matheo:
+        st.markdown("#### 👨‍💻 Mathéo")
+        
+        # Métriques Mathéo
+        met_col1, met_col2 = st.columns(2)
+        with met_col1:
+            st.metric("💰 Total Dû", f"{matheo_total:.2f} €")
+        with met_col2:
+            st.metric("✅ Payé", f"{matheo_paye:.2f} €")
+        
+        st.metric("⏳ En Attente", f"{matheo_en_attente:.2f} €", delta=f"{matheo_progress:.0f}% payé")
+        st.progress(matheo_progress / 100)
         
         st.divider()
-        st.markdown("#### Transactions en attente :")
+        
+        # Liste des paiements en attente
         matheo_pending = df[df['Statut_Matheo'] == 'En attente'].copy()
+        
         if not matheo_pending.empty:
+            st.markdown(f"**{len(matheo_pending)} transaction(s) en attente**")
+            
             for idx, row in matheo_pending.iterrows():
-                with st.container():
-                    col_info, col_btn = st.columns([3, 1])
-                    with col_info:
-                        st.write(f"**{row['Description']}** - {row['Date'].strftime('%d/%m/%Y')}")
-                        st.write(f"<span class='pending'>💰 {row['Montant_Part']:.2f} €</span>", unsafe_allow_html=True)
-                    with col_btn:
-                        if st.button("✅ Payé", key=f"matheo_{idx}"):
-                            st.session_state.data.at[idx, 'Statut_Matheo'] = 'Payé'
-                            st.session_state.data.at[idx, 'Date_Remb_Matheo'] = datetime.now()
-                            
-                            df_save = st.session_state.data.copy()
-                            df_save['Date'] = df_save['Date'].dt.strftime('%Y-%m-%d')
-                            df_save['Date_Remb_Julie'] = pd.to_datetime(df_save['Date_Remb_Julie']).dt.strftime('%Y-%m-%d')
-                            df_save['Date_Remb_Matheo'] = pd.to_datetime(df_save['Date_Remb_Matheo']).dt.strftime('%Y-%m-%d')
-                            conn.update(data=df_save)
+                with st.expander(f"💰 {row['Montant_Part']:.2f} € - {row['Description'][:30]}"):
+                    st.write(f"📅 Date: {row['Date'].strftime('%d/%m/%Y')}")
+                    st.write(f"🏷️ Type: {row['Type']}")
+                    st.write(f"💵 Montant total: {row['Montant']:.2f} €")
+                    st.write(f"👤 Part Mathéo: {row['Montant_Part']:.2f} €")
+                    
+                    if row['Notes']:
+                        st.info(f"📌 {row['Notes']}")
+                    
+                    if st.button("✅ Marquer comme Payé", key=f"matheo_pay_{idx}", use_container_width=True):
+                        st.session_state.data.at[idx, 'Statut_Matheo'] = 'Payé'
+                        st.session_state.data.at[idx, 'Date_Remb_Matheo'] = datetime.now()
+                        
+                        if save_data(st.session_state.data):
+                            st.success("✅ Paiement enregistré !")
                             st.rerun()
         else:
-            st.success("🎉 Tout est payé !")
+            st.success("🎉 Tous les paiements sont à jour !")
 
-# --- TAB 3 : JULIE ---
+# ========== TAB 3 : JULIE ==========
 with tab3:
-    st.subheader("👩‍💻 Statistiques Julie")
+    st.markdown("### 👩‍💻 Tableau de Bord Julie")
     
-    col1, col2, col3 = st.columns(3)
-    col1.metric("💰 Total Encaissé", f"{julie_paye:.2f} €")
+    # Statistiques
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("💰 Encaissé", f"{julie_paye:.2f} €")
     col2.metric("⏳ En Attente", f"{julie_en_attente:.2f} €")
-    col3.metric("📊 Total Dû", f"{(julie_paye + julie_en_attente):.2f} €")
+    col3.metric("📊 Total", f"{julie_total:.2f} €")
+    col4.metric("📈 Taux", f"{julie_progress:.0f}%")
     
     st.divider()
     
-    # Historique des paiements Julie
-    st.subheader("📜 Historique des Paiements")
-    julie_hist = df[df['Statut_Julie'] == 'Payé'].sort_values('Date_Remb_Julie', ascending=False)
-    if not julie_hist.empty:
-        st.dataframe(julie_hist[['Date', 'Description', 'Montant_Part', 'Date_Remb_Julie']], 
-                     use_container_width=True, hide_index=True)
-    else:
-        st.info("Aucun paiement enregistré pour l'instant")
-
-# --- TAB 4 : MATHÉO ---
-with tab4:
-    st.subheader("👨‍💻 Statistiques Mathéo")
+    # Historique des paiements
+    st.markdown("#### 📜 Historique des Paiements")
+    julie_paid = df[df['Statut_Julie'] == 'Payé'].sort_values('Date_Remb_Julie', ascending=False)
     
-    col1, col2, col3 = st.columns(3)
-    col1.metric("💰 Total Encaissé", f"{matheo_paye:.2f} €")
-    col2.metric("⏳ En Attente", f"{matheo_en_attente:.2f} €")
-    col3.metric("📊 Total Dû", f"{(matheo_paye + matheo_en_attente):.2f} €")
-    
-    st.divider()
-    
-    # Historique des paiements Mathéo
-    st.subheader("📜 Historique des Paiements")
-    matheo_hist = df[df['Statut_Matheo'] == 'Payé'].sort_values('Date_Remb_Matheo', ascending=False)
-    if not matheo_hist.empty:
-        st.dataframe(matheo_hist[['Date', 'Description', 'Montant_Part', 'Date_Remb_Matheo']], 
-                     use_container_width=True, hide_index=True)
-    else:
-        st.info("Aucun paiement enregistré pour l'instant")
-
-# --- TAB 5 : DONNÉES BRUTES ---
-with tab5:
-    st.subheader("📋 Gestion des Données")
-    
-    edited_df = st.data_editor(
-        st.session_state.data,
-        use_container_width=True,
-        hide_index=True,
-        num_rows="dynamic",
-        column_config={
-            "Date": st.column_config.DateColumn("Date", format="DD/MM/YYYY"),
-            "Montant": st.column_config.NumberColumn("Montant", format="%.2f €"),
-            "Montant_Part": st.column_config.NumberColumn("Part (50%)", format="%.2f €"),
-            "Statut_Julie": st.column_config.SelectboxColumn("Statut Julie", options=["En attente", "Payé"]),
-            "Statut_Matheo": st.column_config.SelectboxColumn("Statut Mathéo", options=["En attente", "Payé"]),
-        }
-    )
-    
-    col_save, col_export = st.columns(2)
-    
-    with col_save:
-        if st.button("💾 Sauvegarder les Modifications", type="primary", use_container_width=True):
-            st.session_state.data = edited_df
-            df_save = edited_df.copy()
-            df_save['Date'] = pd.to_datetime(df_save['Date']).dt.strftime('%Y-%m-%d')
-            df_save['Date_Remb_Julie'] = pd.to_datetime(df_save['Date_Remb_Julie']).dt.strftime('%Y-%m-%d')
-            df_save['Date_Remb_Matheo'] = pd.to_datetime(df_save['Date_Remb_Matheo']).dt.strftime('%Y-%m-%d')
-            conn.update(data=df_save)
-            st.success("✅ Données sauvegardées !")
-            st.rerun()
-    
-    with col_export:
-        csv = edited_df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            "📥 Exporter en CSV",
-            csv,
-            "mjtgc_export.csv",
-            "text/csv",
-            use_container_width=True
+    if not julie_paid.empty:
+        display_cols = ['Date', 'Type', 'Description', 'Montant_Part', 'Date_Remb_Julie']
+        st.dataframe(
+            julie_paid[display_cols],
+            column_config={
+                "Date": st.column_config.DateColumn("Date Opération", format="DD/MM/YYYY"),
+                "Montant_Part": st.column_config.NumberColumn("Montant", format="%.2f €"),
+                "Date_Remb_Julie": st.column_config.DateColumn("Date Remboursement", format="DD/MM/YYYY"),
+            },
+            use_container_width=True,
+            hide_index=True
         )
+        
+        # Graphique des paiements mensuels
+        if len(julie_paid) > 1:
+            julie_paid_copy = julie_paid.copy()
+            julie_paid_copy['Mois'] = julie_paid_copy['Date_Remb_Julie'].dt.to_period('M').astype(str)
+            monthly_julie = julie_paid_copy.groupby('Mois')['Montant_Part'].sum().reset_index()
+            
+            fig_julie = px.bar(
+                monthly_julie,
+                x='Mois',
+                y='Montant_Part',
+                title="Remboursements Mensuels",
+                labels={'Montant_Part': 'Montant (€)', 'Mois': ''}
+            )
+            fig_julie.update_traces(marker_color='#ec4899')
+            st.plotly_chart(fig_julie, use_container_width=True)
+    else:
+        st.info("Aucun paiement enregistré")
 
-# --- FOOTER ---
-st.divider()
-st.caption(f"🔄 Dernière mise à jour : {datetime.now().strftime('%d/%m/%Y à %H:%M')}")
+# ========== TAB 4 : MATHÉO ==========
+with tab4:
+    st.markdown("### 👨‍💻 Tableau de Bord Mathéo")
+    
+    # Statistiques
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("💰 Encaissé", f"{matheo_paye:.2f} €")
+    col2.metric("⏳ En Attente", f"{matheo_en_attente:.2f} €")
+    col3.metric("📊 Total", f"{matheo_total:.2f} €")
+    col4.metric("📈 Taux", f"{matheo_progress:.0f}%")
+    
+    st.divider()
+    
+    # Historique des paiements
+    st.markdown("#### 📜 Historique des Paiements")
+    matheo_paid = df[df['Statut_Matheo'] == 'Payé'].sort_values('Date_Remb_Matheo', ascending=False)
+    
+    if not matheo_paid.empty:
+        display_cols = ['Date', 'Type', 'Description', 'Montant_Part', 'Date_Remb_Matheo']
+        st.dataframe(
+            matheo_paid[display_cols],
+            column_config={
+                "Date": st.column_config.DateColumn("Date Opération", format="DD/MM/YYYY"),
+                "Montant_Part": st.column_config.NumberColumn("Montant", format="%.2f €"),
+                "Date_Remb_Matheo": st.column_config.DateColumn("Date Remboursement", format="DD/MM/YYYY"),
+            },
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        # Graphique des paiements mensuels
+        if len(matheo_paid) > 1:
+            matheo_paid_copy = matheo_paid.copy()
+            matheo_paid_copy['Mois'] = matheo_paid_copy['Date_Remb_Matheo'].dt.to_period('M').astype(str)
+            monthly_matheo = matheo_paid_copy.groupby('Mois')['Montant_Part'].sum().reset_index()
+            
+            fig_matheo = px.bar(
+                monthly_matheo,
+                x='Mois',
+                y='Montant_Part',
+                title="Remboursements Mensuels",
+                labels={'Montant_Part': 'Montant (€)', 'Mois': ''}
+            )
+            fig_matheo.update_traces(marker_color='#3b82f6')
+            st.plotly_chart(fig_matheo, use_container_width=True)
+    else:
+        st.info("Aucun paiement enregistré")
+
+# ========== TAB 5 : DONNÉES ==========
+with tab5:
+    st.markdown("### 📋 Gestion des Données")
+    
+    # Filtres
+    with st.expander("🔍 Filtres", expanded=False):
+        filter_col1, filter_col2, filter_col3 = st.columns(3)
+        
+        with filter_col1:
+            filter_type = st.multiselect(
+                "Type d'opération",
+                options=df['Type'].unique() if not df.empty else [],
+                default=[]
+            )
+        
+        with filter_col2:
+            filter_year = st.multiselect(
+                "Année",
+                options=sorted(df['Année'].unique()) if not df.empty else [],
+                default=[]
+            )
+        
+        with filter_col3:
+            filter_status = st.selectbox(
+                "Statut",
+                ["Tous", "En attente", "Payé (Julie)", "Payé (Mathéo)", "Soldé"]
+            )
+    
+    # Application des filtres
+    df_filtered = df.copy()
+    
+    if filter_type:
+        df_filtered = df_filtered[df_filtered['Type'].isin(filter_type)]
+    
+    if filter_year:
+        df_filtered = df_filtered[df_filtered['Année'].isin(filter_year)]
+    
+    if filter_status == "En attente":
+        df_filtered = df_filtered[(df_filtered['Statut_Julie'] == 'En attente') | (df_filtered['Statut_Matheo'] == 'En attente')]
+    elif filter_status == "Payé (Julie)":
+        df_filtered = df_filtered[df_filtered['Statut_Julie'] == 'Payé']
+    elif filter_status == "Payé (Mathéo)":
+        df_filtered = df_filtered[df_filtered['Statut_Matheo'] == 'Payé']
+    elif filter_status == "Soldé":
+        df_filtered = df_filtered[(
