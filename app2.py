@@ -18,7 +18,9 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 def simple_ocr(image):
     """Analyse l'image pour extraire Date, Magasin et Prix"""
-    text = pytesseract.image_to_string(image)
+    # Conversion en niveaux de gris pour améliorer l'OCR
+    image = image.convert('L')
+    text = pytesseract.image_to_string(image, lang='fra')
     
     # Cherche un montant (ex: 12.34 ou 12,34)
     prices = re.findall(r"(\d+[\.,]\d{2})", text)
@@ -28,7 +30,7 @@ def simple_ocr(image):
     dates = re.findall(r"(\d{2}/\d{2}/\d{4})", text)
     date_found = pd.to_datetime(dates[0], dayfirst=True) if dates else datetime.now()
     
-    # Nom du magasin (prend la 1ère ligne du ticket)
+    # Nom du magasin (prend la 1ère ligne non vide)
     lines = [l.strip() for l in text.split('\n') if l.strip()]
     name = lines[0][:20] if lines else "Ticket Scan"
     
@@ -55,21 +57,38 @@ file = st.sidebar.file_uploader("Prendre en photo", type=['jpg', 'jpeg', 'png'])
 if file:
     img = Image.open(file)
     if st.sidebar.button("Analyser le ticket"):
-        s_date, s_name, s_price = simple_ocr(img)
-        # Stockage en mémoire pour pré-remplir les champs
-        st.session_state['scan_date'] = s_date
-        st.session_state['scan_name'] = s_name
-        st.session_state['scan_price'] = s_price
-        st.sidebar.success("Analyse terminée !")
+        with st.spinner("Lecture du ticket en cours..."):
+            s_date, s_name, s_price = simple_ocr(img)
+            
+            # Stockage en mémoire
+            st.session_state['scan_date'] = s_date
+            st.session_state['scan_name'] = s_name
+            st.session_state['scan_price'] = s_price
+            st.session_state['show_scan_info'] = True # Flag pour afficher le résumé
+            st.rerun()
+
+# Affichage du résumé du scan (Persistant grâce au session_state)
+if st.session_state.get('show_scan_info'):
+    st.sidebar.success("✅ Analyse terminée !")
+    st.sidebar.info(f"""
+    **Données détectées :**
+    - 🏢 **Magasin :** {st.session_state.get('scan_name')}
+    - 📅 **Date :** {st.session_state.get('scan_date').strftime('%d/%m/%Y')}
+    - 💶 **Prix :** {st.session_state.get('scan_price'):.2f} €
+    """)
+    if st.sidebar.button("Masquer le résumé"):
+        st.session_state['show_scan_info'] = False
+        st.rerun()
 
 st.sidebar.divider()
 st.sidebar.header("📝 Saisir une opération")
 
-# Utilisation des données scannées si elles existent, sinon valeurs par défaut
+# Utilisation des données scannées si elles existent
 date_op = st.sidebar.date_input("Date", st.session_state.get('scan_date', datetime.now()))
 type_op = st.sidebar.selectbox("Nature", ["Vente (Gain net Whatnot)", "Achat Stock (Dépense)"])
 desc = st.sidebar.text_input("Description", st.session_state.get('scan_name', ""))
-montant = st.sidebar.number_input("Montant (€)", min_value=0.0, step=1.0, value=st.session_state.get('scan_price', 0.0))
+# Step 0.01 pour autoriser les centimes
+montant = st.sidebar.number_input("Montant (€)", min_value=0.0, step=0.01, value=float(st.session_state.get('scan_price', 0.0)))
 
 if st.sidebar.button("Enregistrer l'opération"):
     valeur = montant if "Vente" in type_op else -montant
@@ -89,7 +108,7 @@ if st.sidebar.button("Enregistrer l'opération"):
     conn.update(data=df_save)
     
     # Nettoyage de la mémoire du scan après enregistrement
-    for key in ['scan_date', 'scan_name', 'scan_price']:
+    for key in ['scan_date', 'scan_name', 'scan_price', 'show_scan_info']:
         if key in st.session_state: del st.session_state[key]
         
     st.sidebar.success("Enregistré et synchronisé !")
