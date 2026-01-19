@@ -63,7 +63,6 @@ montant = st.sidebar.number_input("Montant (€)", min_value=0.0, step=0.01, val
 
 if st.sidebar.button("Enregistrer l'opération"):
     valeur = montant if "Vente" in type_op else -montant
-    # IMPORTANT : Un remboursement n'est PAS "Payé" par défaut, il s'ajoute au crédit total
     new_row = pd.DataFrame([{
         "Date": pd.to_datetime(date_op), 
         "Type": type_op, "Description": desc, "Montant": valeur, 
@@ -79,16 +78,16 @@ if st.sidebar.button("Enregistrer l'opération"):
 # --- CALCULS LOGIQUE GLOBALE ---
 df_all = st.session_state.data.copy()
 
-# 1. Ce que Julie doit recevoir (50% des ventes non encore marquées comme Payé)
-ventes_non_payees = df_all[(df_all["Type"] == "Vente (Gain net Whatnot)") & (df_all["Payé"] == False)]
-dette_brute = ventes_non_payees["Montant"].sum()
-part_due_julie = dette_brute / 2
+# 1. Dette réelle : 50% des ventes NON COCHÉES
+mask_ventes_dues = (df_all["Type"] == "Vente (Gain net Whatnot)") & (df_all["Payé"] == False)
+part_due_julie = df_all[mask_ventes_dues]["Montant"].sum() * 0.5
 
-# 2. Ce que Mathéo a déjà versé (Somme des remboursements non encore "utilisés/marqués payés")
-remboursements_non_utilises = abs(df_all[(df_all["Type"] == "Remboursement à Julie") & (df_all["Payé"] == False)]["Montant"].sum())
+# 2. Crédit accumulé : Somme des remboursements NON COCHÉS
+mask_remb_encours = (df_all["Type"] == "Remboursement à Julie") & (df_all["Payé"] == False)
+remboursements_non_utilises = abs(df_all[mask_remb_encours]["Montant"].sum())
 
 # --- ONGLETS ---
-tab1, tab2, tab3, tab4 = st.tabs(["📊 Stats & Journal", "🎬 Lives", "👩‍💻 Julie", "👨‍💻 Mathéo"])
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Journal", "🎬 Lives", "👩‍💻 Julie", "👨‍💻 Mathéo"])
 
 with tab1:
     st.subheader("📑 Journal des Transactions")
@@ -98,6 +97,7 @@ with tab1:
         new_df['Date'] = pd.to_datetime(new_df['Date'])
         new_df['Année'] = new_df['Date'].dt.year.astype(str)
         conn.update(data=new_df)
+        st.session_state.data = new_df
         st.cache_data.clear()
         st.rerun()
 
@@ -107,18 +107,19 @@ with tab3:
     if part_due_julie > 0:
         progression = min(remboursements_non_utilises / part_due_julie, 1.0)
         
-        col_a, col_b = st.columns(2)
-        col_a.metric("Dû à Julie (50%)", f"{part_due_julie:.2f} €")
-        col_b.metric("Versé (En attente)", f"{remboursements_non_utilises:.2f} €")
+        c1, c2 = st.columns(2)
+        c1.metric("Dû à Julie (50%)", f"{part_due_julie:.2f} €")
+        c2.metric("Versé (En attente)", f"{remboursements_non_utilises:.2f} €")
         
-        st.write(f"**Progression du remboursement :** {remboursements_non_utilises:.2f}€ / {part_due_julie:.2f}€")
+        st.write(f"**Progression :** {remboursements_non_utilises:.2f}€ / {part_due_julie:.2f}€")
         st.progress(progression)
         
         if progression >= 1.0:
-            st.success("✅ Le montant total est atteint ! Tu peux valider le remboursement.")
-            if st.button("🌟 Valider et remettre les compteurs à zéro"):
-                # On passe TOUTES les ventes non payées ET les remboursements utilisés à Payé = True
+            st.balloons()
+            st.success("✅ Montant total atteint ! Tu peux maintenant valider.")
+            if st.button("🌟 Valider et clôturer cette période"):
                 temp_df = st.session_state.data.copy()
+                # On ne coche que les lignes qui n'étaient pas encore payées
                 temp_df.loc[temp_df["Type"] == "Vente (Gain net Whatnot)", "Payé"] = True
                 temp_df.loc[temp_df["Type"] == "Remboursement à Julie", "Payé"] = True
                 
@@ -129,13 +130,17 @@ with tab3:
                 st.cache_data.clear()
                 st.rerun()
         else:
-            reste = part_due_julie - remboursements_non_utilises
-            st.warning(f"Il manque encore **{reste:.2f} €** pour solder la dette.")
+            st.info(f"Reste à verser : **{(part_due_julie - remboursements_non_utilises):.2f} €**")
+            
+        st.divider()
+        st.write("### 🕒 Remboursements en attente de validation")
+        st.dataframe(df_all[mask_remb_encours][["Date", "Description", "Montant"]], use_container_width=True)
     else:
-        st.success("Julie est totalement remboursée. Félicitations ! ✨")
+        st.success("Toutes les dettes sont réglées ! ✨")
         st.progress(1.0)
 
 with tab4:
-    # Mathéo ne voit ses gains validés que sur ce qui est marqué "Payé"
-    score_matheo = (df_all[(df_all["Montant"] > 0) & (df_all["Payé"] == True)]["Montant"].sum()) / 2
-    st.metric("Gains personnels validés (50%)", f"{score_matheo:.2f} €")
+    # Mathéo voit sa part sur les ventes dont le statut est "Payé"
+    mask_paye = (df_all["Type"] == "Vente (Gain net Whatnot)") & (df_all["Payé"] == True)
+    score_matheo = df_all[mask_paye]["Montant"].sum() * 0.5
+    st.metric("Tes gains personnels validés (50%)", f"{score_matheo:.2f} €")
