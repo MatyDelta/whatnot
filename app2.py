@@ -14,7 +14,7 @@ st.title("🤝 MJTGC - Whatnot Duo Tracker")
 # --- LIAISON GOOGLE SHEETS ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- FONCTIONS TECHNIQUES (GARDÉES) ---
+# --- FONCTIONS TECHNIQUES ---
 def simple_ocr(image):
     image = image.convert('L')
     text = pytesseract.image_to_string(image, lang='fra')
@@ -35,14 +35,15 @@ def load_data():
                 data[col] = "" if col != 'Montant' else 0.0
         data['Date'] = pd.to_datetime(data['Date'], errors='coerce')
         data['Montant'] = pd.to_numeric(data['Montant'], errors='coerce').fillna(0)
-        # Gestion propre des booléens pour éviter les sauts d'actualisation
-        data['Payé'] = data['Payé'].astype(str).str.lower().str.strip().isin(['true', '1', 'vrai', 'x', 'v'])
+        # Nettoyage strict des booléens pour éviter les erreurs de lecture
+        data['Payé'] = data['Payé'].astype(str).str.lower().str.strip().isin(['true', '1', 'vrai', 'x', 'v', 'vrai'])
     return data
 
+# --- INITIALISATION ---
 if 'data' not in st.session_state:
     st.session_state.data = load_data()
 
-# --- BARRE LATÉRALE (SAISIE) ---
+# --- BARRE LATÉRALE ---
 st.sidebar.header("📸 Scanner / Saisir")
 file = st.sidebar.file_uploader("Prendre en photo", type=['jpg', 'jpeg', 'png'])
 
@@ -62,12 +63,15 @@ desc = st.sidebar.text_input("Description", st.session_state.get('scan_name', ""
 montant = st.sidebar.number_input("Montant (€)", min_value=0.0, step=0.01, value=float(st.session_state.get('scan_price', 0.0)))
 
 if st.sidebar.button("Enregistrer l'opération"):
-    # LOGIQUE CORRIGÉE : Rien n'est marqué comme payé à la saisie
+    # ICI : On enregistre l'opération, mais on ne valide RIEN (Payé reste False)
     valeur = montant if "Vente" in type_op else -montant
     new_row = pd.DataFrame([{
         "Date": pd.to_datetime(date_op), 
-        "Type": type_op, "Description": desc, "Montant": valeur, 
-        "Année": str(date_op.year), "Payé": False 
+        "Type": type_op, 
+        "Description": desc, 
+        "Montant": valeur, 
+        "Année": str(date_op.year), 
+        "Payé": False 
     }])
     st.session_state.data = pd.concat([st.session_state.data, new_row], ignore_index=True)
     df_save = st.session_state.data.copy()
@@ -75,26 +79,26 @@ if st.sidebar.button("Enregistrer l'opération"):
     conn.update(data=df_save)
     st.rerun()
 
-# --- LOGIQUE DE CALCUL GLOBALE ---
-df_all = st.session_state.data.copy()
+# --- LOGIQUE DE CALCUL STRICT ---
+df_calc = st.session_state.data.copy()
 
-# 1. Total que Julie doit recevoir (50% des ventes non payées)
-mask_ventes = (df_all["Type"] == "Vente (Gain net Whatnot)") & (df_all["Payé"] == False)
-total_du_julie = df_all[mask_ventes]["Montant"].sum() * 0.5
+# 1. Dette totale : 50% de TOUTES les ventes non payées
+mask_ventes = (df_calc["Type"] == "Vente (Gain net Whatnot)") & (df_calc["Payé"] == False)
+dette_a_rembourser = df_calc[mask_ventes]["Montant"].sum() * 0.5
 
-# 2. Cumul de tes remboursements (non encore validés)
-mask_remb = (df_all["Type"] == "Remboursement à Julie") & (df_all["Payé"] == False)
-total_verse_julie = abs(df_all[mask_remb]["Montant"].sum())
+# 2. Cagnotte : Somme de TOUS les remboursements non encore validés
+mask_remb = (df_calc["Type"] == "Remboursement à Julie") & (df_calc["Payé"] == False)
+cagnotte_remboursements = abs(df_calc[mask_remb]["Montant"].sum())
 
-# 3. Reste à payer réel
-reste_a_payer = max(0.0, total_du_julie - total_verse_julie)
+# 3. Ce qu'il manque encore
+reste_a_donner = max(0.0, dette_a_rembourser - cagnotte_remboursements)
 
 # --- ONGLETS ---
-tab1, tab2, tab3, tab4 = st.tabs(["📊 Stats & Journal", "🎬 Historique Lives", "👩‍💻 Julie", "👨‍💻 Mathéo"])
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Journal", "🎬 Historique Lives", "👩‍💻 Julie", "👨‍💻 Mathéo"])
 
 with tab1:
     st.subheader("📑 Journal des Transactions")
-    edited_df = st.data_editor(df_all.sort_values("Date", ascending=False).drop(columns=['Année']), use_container_width=True, hide_index=True, num_rows="dynamic")
+    edited_df = st.data_editor(df_calc.sort_values("Date", ascending=False).drop(columns=['Année']), use_container_width=True, hide_index=True)
     if st.button("💾 Sauvegarder modifications"):
         new_df = edited_df.copy()
         new_df['Date'] = pd.to_datetime(new_df['Date'])
@@ -104,35 +108,35 @@ with tab1:
         st.rerun()
 
 with tab3:
-    st.subheader("👩‍💻 Suivi Julie")
+    st.subheader("👩‍💻 Suivi du Remboursement Julie")
+    
     col1, col2, col3 = st.columns(3)
-    col1.metric("Dette Totale (50%)", f"{total_du_julie:.2f} €")
-    col2.metric("Déjà versé (Cumul)", f"{total_verse_julie:.2f} €")
-    col3.metric("RESTE À PAYER", f"{reste_a_payer:.2f} €", delta_color="inverse")
+    col1.metric("Somme due (1/2)", f"{dette_a_rembourser:.2f} €")
+    col2.metric("Cumul déjà versé", f"{cagnotte_remboursements:.2f} €")
+    col3.metric("RESTE À DONNER", f"{reste_a_donner:.2f} €", delta_color="inverse")
 
-    st.divider()
-    if total_du_julie > 0:
-        prog = min(total_verse_julie / total_du_julie, 1.0)
+    if dette_a_rembourser > 0:
+        prog = min(cagnotte_remboursements / dette_a_rembourser, 1.0)
+        st.write(f"**Progression : {cagnotte_remboursements:.2f}€ / {dette_a_rembourser:.2f}€**")
         st.progress(prog)
-        st.write(f"Avancement : **{prog*100:.1f}%**")
 
-        if total_verse_julie >= total_du_julie:
-            st.success("✅ Somme atteinte ! Tu peux valider.")
-            if st.button("🌟 Valider le remboursement complet"):
+        if cagnotte_remboursements >= dette_a_rembourser:
+            st.balloons()
+            st.success("✅ C'est bon ! Tu as fini de rembourser Julie.")
+            if st.button("🌟 VALIDER : Tout cocher et remettre à zéro"):
                 temp_df = st.session_state.data.copy()
-                # On valide uniquement les lignes en attente
+                # On coche toutes les lignes du cycle actuel
                 temp_df.loc[temp_df["Payé"] == False, "Payé"] = True
                 conn.update(data=temp_df)
                 st.session_state.data = temp_df
                 st.rerun()
         else:
-            st.warning(f"Il manque encore **{reste_a_payer:.2f} €** pour solder la dette.")
+            st.warning(f"Continue ! Il manque encore **{reste_a_donner:.2f}€** pour que je valide.")
     else:
-        st.success("Aucune dette en cours ! ✨")
+        st.success("Julie est à jour. Aucune dette ! ✨")
 
 with tab4:
     st.subheader("👨‍💻 Suivi Mathéo")
-    # Gains validés = 50% des ventes cochées "Payé"
-    mask_valide = (df_all["Type"] == "Vente (Gain net Whatnot)") & (df_all["Payé"] == True)
-    gains_valides = df_all[mask_valide]["Montant"].sum() * 0.5
-    st.metric("Tes gains validés mémorisés", f"{gains_valides:.2f} €")
+    # Tes gains validés = 50% des ventes dont le statut est ENFIN "Payé"
+    score = (df_calc[(df_calc["Type"] == "Vente (Gain net Whatnot)") & (df_calc["Payé"] == True)]["Montant"].sum()) * 0.5
+    st.metric("Gains personnels sécurisés", f"{score:.2f} €")
