@@ -114,15 +114,46 @@ def load_data():
         
         # Conversion des types
         data['Date'] = pd.to_datetime(data['Date'], errors='coerce')
-        data['Montant_Gain'] = pd.to_numeric(data['Montant_Gain'], errors='coerce').fillna(0)
-        data['Montant_Depense'] = pd.to_numeric(data['Montant_Depense'], errors='coerce').fillna(0)
-        data['Montant_Rembourse_Julie'] = pd.to_numeric(data['Montant_Rembourse_Julie'], errors='coerce').fillna(0)
+        
+        # MIGRATION AUTOMATIQUE V1 → V2
+        # Si les anciennes colonnes existent (Montant), convertir vers la nouvelle structure
+        if 'Montant' in data.columns and 'Montant_Gain' not in data.columns:
+            st.info("🔄 Migration automatique des données V1 → V2 en cours...")
+            
+            # Convertir Montant en Montant_Gain et Montant_Depense
+            data['Montant'] = pd.to_numeric(data['Montant'], errors='coerce').fillna(0)
+            data['Montant_Gain'] = data['Montant'].apply(lambda x: x if x > 0 else 0)
+            data['Montant_Depense'] = data['Montant'].apply(lambda x: abs(x) if x < 0 else 0)
+            
+            # Renommer les anciennes colonnes de statut
+            if 'Statut_Julie' in data.columns:
+                data['Statut_Remb_Julie'] = data['Statut_Julie']
+            if 'Date_Remb_Julie' in data.columns:
+                data['Date_Remb_Complete_Julie'] = data['Date_Remb_Julie']
+            
+            # Calculer les montants remboursés pour Julie
+            def calc_remb_julie(row):
+                if row['Montant_Gain'] > 0:
+                    if 'Statut_Remb_Julie' in row and row['Statut_Remb_Julie'] == 'Payé':
+                        return row['Montant_Gain'] / 2
+                return 0
+            
+            data['Montant_Rembourse_Julie'] = data.apply(calc_remb_julie, axis=1)
+            
+            st.success("✅ Migration terminée ! Vos données ont été converties.")
+        else:
+            # Structure V2 déjà présente
+            data['Montant_Gain'] = pd.to_numeric(data['Montant_Gain'], errors='coerce').fillna(0)
+            data['Montant_Depense'] = pd.to_numeric(data['Montant_Depense'], errors='coerce').fillna(0)
+            data['Montant_Rembourse_Julie'] = pd.to_numeric(data['Montant_Rembourse_Julie'], errors='coerce').fillna(0)
         
         # Ajout des colonnes manquantes
         if 'Live_ID' not in data.columns:
             data['Live_ID'] = None
         if 'Statut_Remb_Julie' not in data.columns:
-            data['Statut_Remb_Julie'] = 'En attente'
+            data['Statut_Remb_Julie'] = data.apply(
+                lambda row: 'En attente' if row['Montant_Gain'] > 0 else 'N/A', axis=1
+            )
         if 'Date_Remb_Complete_Julie' not in data.columns:
             data['Date_Remb_Complete_Julie'] = None
         if 'Année' not in data.columns:
@@ -163,7 +194,23 @@ if 'delete_mode' not in st.session_state:
 if 'rows_to_delete' not in st.session_state:
     st.session_state.rows_to_delete = []
 
+if 'migration_done' not in st.session_state:
+    st.session_state.migration_done = False
+
 df = st.session_state.data
+
+# Si migration détectée et pas encore sauvegardée
+if not df.empty and not st.session_state.migration_done:
+    # Vérifier si c'était une migration (présence de Montant_Gain mais pas de Live_ID rempli)
+    if 'Montant_Gain' in df.columns and df['Live_ID'].isna().all():
+        with st.sidebar:
+            st.warning("⚠️ Migration V1→V2 détectée")
+            if st.button("💾 Sauvegarder les données migrées", use_container_width=True):
+                if save_data(df):
+                    st.success("✅ Données migrées sauvegardées !")
+                    st.session_state.migration_done = True
+                    st.balloons()
+                    st.rerun()
 
 # --- CALCULS FINANCIERS ---
 def calculer_metriques(df):
