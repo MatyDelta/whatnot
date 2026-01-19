@@ -35,7 +35,6 @@ def load_data():
         data = data.dropna(how='all')
         data['Date'] = pd.to_datetime(data['Date'], errors='coerce')
         data['Montant'] = pd.to_numeric(data['Montant'], errors='coerce').fillna(0)
-        # Gestion propre des booléens pour éviter les erreurs de calcul
         data['Payé'] = data['Payé'].astype(str).str.lower().str.strip().isin(['true', '1', 'vrai', 'x', 'v'])
     return data
 
@@ -69,7 +68,6 @@ st.sidebar.divider()
 st.sidebar.header("📝 Saisir une opération")
 
 date_op = st.sidebar.date_input("Date", st.session_state.get('scan_date', datetime.now()))
-# AJOUT DE LA NATURE REMBOURSEMENT
 type_op = st.sidebar.selectbox("Nature", ["Vente (Gain net Whatnot)", "Achat Stock (Dépense)", "Remboursement à Julie"])
 desc = st.sidebar.text_input("Description", st.session_state.get('scan_name', ""))
 montant = st.sidebar.number_input("Montant (€)", min_value=0.0, step=0.01, value=float(st.session_state.get('scan_price', 0.0)))
@@ -78,14 +76,11 @@ if st.sidebar.button("Enregistrer l'opération"):
     temp_df = st.session_state.data.copy()
     paye_status = False
     
-    # --- LOGIQUE DE REMBOURSEMENT AUTOMATIQUE ---
     if type_op == "Remboursement à Julie":
         valeur = -montant
         paye_status = True
-        # On doit solder 2x le montant versé à Julie pour équilibrer le CA Brut
         montant_a_solder = montant * 2
         
-        # On cherche les ventes non payées pour les cocher
         indices_ventes = temp_df[(temp_df['Montant'] > 0) & (temp_df['Payé'] == False)].sort_values("Date").index
         for idx in indices_ventes:
             if montant_a_solder > 0:
@@ -107,12 +102,10 @@ if st.sidebar.button("Enregistrer l'opération"):
     
     st.session_state.data = pd.concat([temp_df, new_row], ignore_index=True)
     
-    # Sauvegarde
     df_save = st.session_state.data.copy()
     df_save['Date'] = df_save['Date'].dt.strftime('%Y-%m-%d')
     conn.update(data=df_save)
     
-    # Nettoyage
     for key in ['scan_date', 'scan_name', 'scan_price', 'show_scan_info']:
         st.session_state.pop(key, None)
     st.sidebar.success("Enregistré et synchronisé !")
@@ -121,12 +114,11 @@ if st.sidebar.button("Enregistrer l'opération"):
 # --- CALCULS MJTGC ---
 df_all = st.session_state.data.sort_values("Date").reset_index(drop=True)
 
-# 1. Calcul des Lives (Groupement par 2)
 lives_history = []
 i = 0
 while i < len(df_all) - 1:
     curr, nxt = df_all.iloc[i], df_all.iloc[i+1]
-    if (curr['Montant'] * nxt['Montant']) < 0: # Un positif, un négatif
+    if (curr['Montant'] * nxt['Montant']) < 0:
         lives_history.append({
             "Date": nxt['Date'],
             "Détails": f"{curr['Description']} + {nxt['Description']}",
@@ -138,9 +130,7 @@ while i < len(df_all) - 1:
     else: i += 1
 df_lives = pd.DataFrame(lives_history)
 
-# 2. Variables de performance
 ca_historique = df_all[df_all["Montant"] > 0]["Montant"].sum()
-# Achats de stock uniquement (on exclut les lignes de remboursement du calcul des dépenses stock)
 achats_stock = abs(df_all[(df_all["Montant"] < 0) & (df_all["Type"] != "Remboursement à Julie")]["Montant"].sum())
 gains_non_payes = df_all[(df_all["Montant"] > 0) & (df_all["Payé"] == False)]["Montant"].sum()
 total_rembourse_julie = abs(df_all[df_all["Type"] == "Remboursement à Julie"]["Montant"].sum())
@@ -163,12 +153,15 @@ with tab1:
     col_ver.warning(f"👉 Reste à verser à Julie : **{(gains_non_payes/2):.2f} €**")
 
     st.divider()
-    st.subheader("📑 Toutes les transactions")
-    edited_df = st.data_editor(df_all.drop(columns=['Année']), use_container_width=True, hide_index=True, key="editor")
+    st.subheader("📑 Journal des transactions")
+    # MAINTIENT DE LA SUPPRESSION ET AJOUT DE LIGNES
+    edited_df = st.data_editor(df_all.drop(columns=['Année']), use_container_width=True, hide_index=True, key="editor", num_rows="dynamic")
     if st.button("💾 Sauvegarder les modifications"):
         df_save = edited_df.copy()
         df_save['Date'] = pd.to_datetime(df_save['Date']).dt.strftime('%Y-%m-%d')
         conn.update(data=df_save)
+        st.cache_data.clear() # Nettoie le cache pour recharger les données fraîches
+        st.session_state.data = load_data()
         st.rerun()
 
 with tab2:
@@ -194,4 +187,3 @@ with tab3:
 with tab4:
     st.subheader("👨‍💻 Espace Mathéo")
     st.metric("Total empoché (Net)", f"{(gains_valides / 2):.2f} €")
-    st.info("Ce montant correspond à ta part sur les ventes déjà marquées comme payées.")
