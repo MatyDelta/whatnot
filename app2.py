@@ -17,7 +17,6 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 # --- FONCTIONS TECHNIQUES ---
 
 def simple_ocr(image):
-    """Analyse l'image pour extraire Date, Magasin et Prix"""
     text = pytesseract.image_to_string(image)
     prices = re.findall(r"(\d+[\.,]\d{2})", text)
     price = float(prices[-1].replace(',', '.')) if prices else 0.0
@@ -28,22 +27,18 @@ def simple_ocr(image):
     return date_found, name, price
 
 def load_data():
-    """Charge les données depuis Google Sheets"""
     data = conn.read(ttl="0s")
     if data is not None and not data.empty:
         data = data.dropna(how='all')
         data['Date'] = pd.to_datetime(data['Date'], errors='coerce')
         data['Montant'] = pd.to_numeric(data['Montant'], errors='coerce').fillna(0)
-        # On garde la colonne Payé pour la compatibilité, mais on gère le reste par calcul
-        if 'Payé' not in data.columns:
-            data['Payé'] = False
     return data
 
 # --- INITIALISATION ---
 if 'data' not in st.session_state:
     st.session_state.data = load_data()
 
-# --- BARRE LATÉRALE (Scanner + Saisie) ---
+# --- BARRE LATÉRALE ---
 st.sidebar.header("📸 Scanner un Ticket")
 file = st.sidebar.file_uploader("Prendre en photo", type=['jpg', 'jpeg', 'png'])
 
@@ -65,7 +60,7 @@ desc = st.sidebar.text_input("Description", st.session_state.get('scan_name', ""
 montant = st.sidebar.number_input("Montant (€)", min_value=0.0, step=1.0, value=st.session_state.get('scan_price', 0.0))
 
 if st.sidebar.button("Enregistrer l'opération"):
-    # Si c'est un achat ou un remboursement, on enregistre en négatif pour la balance
+    # Logique de signe : Vente = Positif / Achat et Remboursement = Négatif
     valeur = montant if "Vente" in type_op else -montant
     
     new_row = pd.DataFrame([{
@@ -73,8 +68,7 @@ if st.sidebar.button("Enregistrer l'opération"):
         "Type": type_op, 
         "Description": desc, 
         "Montant": valeur, 
-        "Année": str(date_op.year),
-        "Payé": True if type_op == "Remboursement Julie" else False
+        "Année": str(date_op.year)
     }])
     st.session_state.data = pd.concat([st.session_state.data, new_row], ignore_index=True)
     
@@ -84,48 +78,41 @@ if st.sidebar.button("Enregistrer l'opération"):
     
     for key in ['scan_date', 'scan_name', 'scan_price']:
         if key in st.session_state: del st.session_state[key]
-    st.sidebar.success("Enregistré et synchronisé !")
+    st.sidebar.success("Enregistré !")
     st.rerun()
 
-# --- LOGIQUE DE CALCUL MJTGC ---
+# --- LOGIQUE DE CALCUL ---
 df_all = st.session_state.data.sort_values("Date").reset_index(drop=True)
 
-# 1. Calcul de la dette Julie (50% des Ventes)
+# 1. Calcul de la dette théorique (50% des gains de ventes)
 total_ventes = df_all[df_all["Type"] == "Vente (Gain net Whatnot)"]["Montant"].sum()
-dette_julie_totale = total_ventes / 2
+dette_initiale_julie = total_ventes / 2
 
-# 2. Calcul des remboursements déjà faits (on somme les valeurs négatives du type remboursement)
-total_remboursements = abs(df_all[df_all["Type"] == "Remboursement Julie"]["Montant"].sum())
+# 2. Somme des remboursements (montants négatifs enregistrés sous "Remboursement Julie")
+total_deja_paye = abs(df_all[df_all["Type"] == "Remboursement Julie"]["Montant"].sum())
 
-# 3. Solde restant
-reste_a_payer = dette_julie_totale - total_remboursements
-progression = min(total_remboursements / dette_julie_totale, 1.0) if dette_julie_totale > 0 else 1.0
-
-# 4. Calcul global pour les stats
-achats_historique = abs(df_all[df_all["Type"] == "Achat Stock (Dépense)"]["Montant"].sum())
+# 3. Calcul par soustraction
+reste_a_verser = dette_initiale_julie - total_deja_paye
+progression = min(total_deja_paye / dette_initiale_julie, 1.0) if dette_initiale_julie > 0 else 1.0
 
 # --- ONGLETS ---
-tab1, tab2, tab3, tab4 = st.tabs(["💰 Suivi Julie", "🎬 Historique Lives", "📊 Stats Globales", "👨‍💻 Mathéo"])
+tab1, tab2, tab3 = st.tabs(["💰 Remboursement Julie", "🎬 Historique Lives", "📊 Stats Globales"])
 
 with tab1:
-    st.subheader("💳 Remboursement de Julie")
+    st.subheader("💸 État du compte de Julie")
     
-    # Métriques principales
     c1, c2, c3 = st.columns(3)
-    c1.metric("Dette Totale (50% gains)", f"{dette_julie_totale:.2f} €")
-    c2.metric("Déjà remboursé", f"{total_remboursements:.2f} €")
-    c3.metric("Reste à payer", f"{reste_a_payer:.2f} €", delta=f"-{total_remboursements:.2f}")
+    c1.metric("Dû total (50% Gains)", f"{dette_initiale_julie:.2f} €")
+    c2.metric("Déjà envoyé", f"{total_deja_paye:.2f} €")
+    c3.metric("Reste à payer", f"{reste_a_verser:.2f} €", delta=f"-{total_deja_paye:.2f}")
 
-    # Barre de progression
     st.write(f"**Progression du remboursement : {progression*100:.1f}%**")
     st.progress(progression)
 
-    if reste_a_payer <= 0 and total_ventes > 0:
-        st.success("✅ Julie est totalement remboursée !")
-
     st.divider()
-    st.subheader("📑 Historique des transactions")
-    edited_df = st.data_editor(df_all, use_container_width=True, hide_index=True, key="editor")
+    st.subheader("📑 Historique complet des transactions")
+    # L'utilisateur peut modifier les montants ici si besoin
+    edited_df = st.data_editor(df_all, use_container_width=True, hide_index=True)
     if st.button("💾 Sauvegarder les modifications"):
         st.session_state.data = edited_df
         df_save = edited_df.copy()
@@ -135,9 +122,9 @@ with tab1:
 
 with tab2:
     st.subheader("🍿 Rentabilité par Live")
-    # Logique simple de pairing achat/vente
     lives_history = []
-    temp_df = df_all[df_all["Type"] != "Remboursement Julie"] # On ignore les remboursements ici
+    # On filtre pour n'avoir que les achats et ventes pour le calcul de rentabilité
+    temp_df = df_all[df_all["Type"].isin(["Vente (Gain net Whatnot)", "Achat Stock (Dépense)"])]
     i = 0
     while i < len(temp_df) - 1:
         curr = temp_df.iloc[i]
@@ -147,31 +134,19 @@ with tab2:
             lives_history.append({
                 "Date": nxt['Date'],
                 "Détails": f"{curr['Description']} + {nxt['Description']}",
-                "Invest": min(curr['Montant'], nxt['Montant']),
-                "Vente": max(curr['Montant'], nxt['Montant']),
                 "Bénéfice": gain_net
             })
             i += 2
         else: i += 1
     
     if lives_history:
-        df_lives = pd.DataFrame(lives_history)
-        st.dataframe(df_lives, use_container_width=True, hide_index=True)
-        fig = px.bar(df_lives, x="Date", y="Bénéfice", color="Bénéfice")
-        st.plotly_chart(fig, use_container_width=True)
+        st.dataframe(pd.DataFrame(lives_history), use_container_width=True, hide_index=True)
     else:
-        st.info("Besoin d'un achat et d'une vente pour calculer un live.")
+        st.info("Ajoutez des données pour voir les calculs par live.")
 
 with tab3:
     st.subheader("📈 Performance MJTGC")
-    col1, col2 = st.columns(2)
-    col1.metric("Chiffre d'Affaire Total", f"{total_ventes:.2f} €")
-    col2.metric("Total Achats Stock", f"-{achats_historique:.2f} €")
-    
-    st.metric("Bénéfice Brut du Duo", f"{(total_ventes - achats_historique):.2f} €")
-
-with tab4:
-    st.subheader("👨‍💻 Espace Mathéo")
-    st.write("Ici s'affiche ce qu'il te reste après avoir payé Julie.")
-    mon_gain = (total_ventes / 2) - achats_historique
-    st.metric("Mon Bénéfice Net (Ventes/2 - Achats)", f"{mon_gain:.2f} €")
+    achats = abs(df_all[df_all["Type"] == "Achat Stock (Dépense)"]["Montant"].sum())
+    st.metric("Chiffre d'Affaire Total", f"{total_ventes:.2f} €")
+    st.metric("Investissement Stock", f"-{achats:.2f} €")
+    st.metric("Bénéfice Net Global", f"{(total_ventes - achats):.2f} €")
