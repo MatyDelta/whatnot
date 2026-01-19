@@ -1,6 +1,5 @@
 streamlit
 pandas
 plotly
-streamlit-gsheets
-Pillow
+st-gsheets-connection
 pytesseract
