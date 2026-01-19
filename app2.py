@@ -3,7 +3,14 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-from streamlit_gsheets import GSheetsConnection
+try:
+    from streamlit_gsheets import GSheetsConnection
+except ImportError:
+    try:
+        from st_gsheets_connection import GSheetsConnection
+    except ImportError:
+        st.error("❌ Erreur : Package Google Sheets non trouvé. Installez avec : pip install streamlit-gsheets")
+        st.stop()
 from PIL import Image
 import pytesseract
 import re
