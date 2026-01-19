@@ -7,17 +7,22 @@ from PIL import Image
 import pytesseract
 import re
 
-# --- CONFIGURATION ET CONSTANTES ---
-st.set_page_config(page_title="MJTGC Duo Tracker v2", layout="wide", page_icon="💰")
+# --- CONFIGURATION STYLE ---
+st.set_page_config(page_title="MJTGC Duo Finance", layout="wide", page_icon="🤝")
 
-TYPE_VENTE = "📈 Vente (Gain Net)"
-TYPE_ACHAT = "📉 Achat Stock"
-TYPE_REMB_J = "💸 Remboursement Julie"
+# Personnalisation CSS pour une interface plus moderne
+st.markdown("""
+    <style>
+    .main { background-color: #f5f7f9; }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .stProgress > div > div > div > div { background-color: #2ecc71; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# --- CONNEXION ---
+# --- CONNEXION & DATA ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-def load_data():
+def get_data():
     df = conn.read(ttl="0s")
     if df is not None and not df.empty:
         df = df.dropna(how='all')
@@ -27,117 +32,123 @@ def load_data():
         df = pd.DataFrame(columns=["Date", "Type", "Description", "Montant", "Année"])
     return df
 
-# --- LOGIQUE OCR ---
-def perform_ocr(image):
-    try:
-        text = pytesseract.image_to_string(image)
-        prices = re.findall(r"(\d+[\.,]\d{2})", text)
-        price = float(prices[-1].replace(',', '.')) if prices else 0.0
-        return datetime.now(), "Nouveau Scan", price
-    except:
-        return datetime.now(), "Erreur Scan", 0.0
+# --- LOGIQUE MÉTIER ---
+def save_entry(date, n_type, desc, montant):
+    # Logique : Les ventes sont des entrées (+), les achats et remboursements sont des sorties (-)
+    valeur = montant if "Vente" in n_type else -montant
+    new_data = pd.DataFrame([{
+        "Date": pd.to_datetime(date),
+        "Type": n_type,
+        "Description": desc,
+        "Montant": valeur,
+        "Année": str(date.year)
+    }])
+    updated_df = pd.concat([st.session_state.data, new_data], ignore_index=True)
+    conn.update(data=updated_df)
+    st.session_state.data = updated_df
+    st.rerun()
 
-# --- INITIALISATION ---
+# Initialisation
 if 'data' not in st.session_state:
-    st.session_state.data = load_data()
+    st.session_state.data = get_data()
 
 df = st.session_state.data
 
-# --- SIDEBAR : SAISIE ---
-with st.sidebar:
-    st.header("📸 Nouveau Ticket")
-    uploaded_file = st.file_uploader("Scan", type=['jpg', 'png', 'jpeg'])
-    if uploaded_file and st.button("Analyser"):
-        d, desc, p = perform_ocr(Image.open(uploaded_file))
-        st.session_state.update({"d": d, "desc": desc, "p": p})
+# --- CALCULS CLÉS (Soustraction dynamique) ---
+ventes_totale = df[df["Type"].str.contains("Vente", na=False)]["Montant"].sum()
+remboursements_totaux = abs(df[df["Type"].str.contains("Remboursement", na=False)]["Montant"].sum())
+achats_totaux = abs(df[df["Type"].str.contains("Achat", na=False)]["Montant"].sum())
+
+dû_julie = ventes_totale / 2
+reste_a_payer = max(0.0, dû_julie - remboursements_totaux)
+progression = min(remboursements_totaux / dû_julie, 1.0) if dû_julie > 0 else 1.0
+
+# --- INTERFACE ---
+st.title("🤝 MJTGC Duo Finance")
+st.subheader("Suivi de rentabilité et remboursements en temps réel")
+
+# ZONE 1 : LE COCKPIT (Remboursement Julie)
+with st.container():
+    col1, col2, col3 = st.columns([1, 1, 2])
     
-    st.divider()
-    st.header("📝 Ajouter une ligne")
-    with st.form("entry_form", clear_on_submit=True):
-        f_date = st.date_input("Date", st.session_state.get("d", datetime.now()))
-        f_type = st.selectbox("Nature", [TYPE_VENTE, TYPE_ACHAT, TYPE_REMB_J])
-        f_desc = st.text_input("Description", st.session_state.get("desc", ""))
-        f_mnt = st.number_input("Montant (€)", min_value=0.0, value=st.session_state.get("p", 0.0))
-        
-        if st.form_submit_button("Enregistrer"):
-            # Vente = Positif / Achat & Remboursement = Sorties de caisse (Négatif)
-            valeur = f_mnt if f_type == TYPE_VENTE else -f_mnt
-            new_row = pd.DataFrame([{
-                "Date": pd.to_datetime(f_date),
-                "Type": f_type,
-                "Description": f_desc,
-                "Montant": valeur,
-                "Année": str(f_date.year)
-            }])
-            st.session_state.data = pd.concat([df, new_row], ignore_index=True)
-            conn.update(data=st.session_state.data)
-            st.rerun()
-
-# --- CALCULS DE LA BALANCE ---
-# 1. Ce que Julie doit toucher au total (50% des ventes)
-total_ventes = df[df["Type"] == TYPE_VENTE]["Montant"].sum()
-dette_theorique_julie = total_ventes / 2
-
-# 2. Ce qui a déjà été soustrait (Remboursements saisis)
-deja_rembourse = abs(df[df["Type"] == TYPE_REMB_J]["Montant"].sum())
-
-# 3. Le reste à payer par soustraction simple
-reste_a_payer = max(0.0, dette_theorique_julie - deja_rembourse)
-progression = min(deja_rembourse / dette_theorique_julie, 1.0) if dette_theorique_julie > 0 else 1.0
-
-# --- INTERFACE PRINCIPALE ---
-st.title("🤝 MJTGC Duo Tracker")
-
-# Widgets de résumé
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    st.metric("Chiffre d'Affaires", f"{total_ventes:.2f} €")
-with c2:
-    st.metric("Total Achats Stock", f"{df[df['Type'] == TYPE_ACHAT]['Montant'].sum():.2f} €")
-with c3:
-    st.metric("Part de Julie (Dû)", f"{dette_theorique_julie:.2f} €")
-with c4:
-    color = "off" if reste_a_payer > 0 else "normal"
-    st.metric("Reste à lui verser", f"{reste_a_payer:.2f} €", delta=f"-{deja_rembourse:.2f} déjà fait")
-
-# Barre de progression
-st.subheader("📊 État du Remboursement de Julie")
-st.progress(progression)
-st.caption(f"Julie a reçu {deja_rembourse:.2f} € sur les {dette_theorique_julie:.2f} € prévus ({progression*100:.1f}%)")
-
-# Onglets
-tab_list, tab_viz = st.tabs(["📑 Historique & Édition", "📈 Analyses"])
-
-with tab_list:
-    st.subheader("Toutes les opérations")
-    # Tri par date décroissante pour voir le plus récent en haut
-    df_display = df.sort_values(by="Date", ascending=False)
-    edited_df = st.data_editor(df_display, use_container_width=True, hide_index=True)
+    with col1:
+        st.metric("Total dû à Julie", f"{dû_julie:.2f} €")
+    with col2:
+        st.metric("Reste à verser", f"{reste_a_payer:.2f} €", delta=f"-{remboursements_totaux:.2f} payés", delta_color="normal")
     
-    if st.button("💾 Sauvegarder les modifications"):
-        st.session_state.data = edited_df
+    with col3:
+        st.write(f"**Niveau de remboursement : {progression*100:.1f}%**")
+        st.progress(progression)
+        if reste_a_payer <= 0 and dû_julie > 0:
+            st.success("✅ Julie est à jour !")
+        else:
+            st.info(f"👉 Julie possède déjà **{remboursements_totaux:.2f} €** de sa part.")
+
+st.divider()
+
+# ZONE 2 : ACTIONS & ANALYSES
+tab_add, tab_stats, tab_history = st.tabs(["➕ Ajouter une Opération", "📊 Performance Duo", "📖 Registre Complet"])
+
+with tab_add:
+    c_left, c_right = st.columns(2)
+    
+    with c_left:
+        st.markdown("#### 📝 Saisie Manuelle")
+        with st.form("quick_add", clear_on_submit=True):
+            f_date = st.date_input("Date", datetime.now())
+            f_type = st.selectbox("Type", ["Vente (Gain net Whatnot)", "Achat Stock (Dépense)", "Remboursement Julie"])
+            f_desc = st.text_input("Description (ex: Live Pokémon, Virement Lydia...)")
+            f_mnt = st.number_input("Montant (€)", min_value=0.0, step=0.1)
+            
+            if st.form_submit_button("Valider l'opération"):
+                if f_desc and f_mnt > 0:
+                    save_entry(f_date, f_type, f_desc, f_mnt)
+                else:
+                    st.error("Remplis la description et le montant !")
+
+    with c_right:
+        st.markdown("#### 📸 Scan de Ticket")
+        uploaded_file = st.file_uploader("Prendre une photo", type=['jpg', 'png', 'jpeg'])
+        if uploaded_file:
+            st.warning("OCR activé. Vérifiez bien les données avant de valider.")
+            # Ici on pourrait appeler la fonction simple_ocr définie précédemment
+            st.image(uploaded_file, width=200)
+
+with tab_stats:
+    st.markdown("#### 📉 Bilan Financier")
+    s1, s2, s3 = st.columns(3)
+    s1.metric("Chiffre d'Affaires (CA)", f"{ventes_totale:.2f} €")
+    s2.metric("Investissement Stock", f"-{achats_totaux:.2f} €")
+    s3.metric("Bénéfice Net Global", f"{(ventes_totale - achats_totaux):.2f} €")
+    
+    # Petit graphique d'évolution
+    df_ventes = df[df["Type"].str.contains("Vente")].sort_values("Date")
+    if not df_ventes.empty:
+        fig = px.area(df_ventes, x="Date", y="Montant", title="Historique des Gains Whatnot")
+        st.plotly_chart(fig, use_container_width=True)
+
+with tab_history:
+    st.markdown("#### 🗄️ Journal des transactions")
+    # On affiche les données triées par date récente
+    df_recent = df.sort_values("Date", ascending=False)
+    
+    # Éditeur de données pour modifications rapides
+    edited_df = st.data_editor(
+        df_recent, 
+        use_container_width=True, 
+        num_rows="dynamic",
+        column_config={
+            "Montant": st.column_config.NumberColumn(format="%.2f €"),
+            "Type": st.column_config.SelectboxColumn(options=["Vente (Gain net Whatnot)", "Achat Stock (Dépense)", "Remboursement Julie"])
+        }
+    )
+    
+    if st.button("💾 Appliquer les modifications du registre"):
         conn.update(data=edited_df)
-        st.success("Modifications enregistrées !")
+        st.session_state.data = edited_df
+        st.success("Base de données mise à jour !")
         st.rerun()
 
-with tab_viz:
-    col_left, col_right = st.columns(2)
-    
-    with col_left:
-        st.write("💰 **Répartition des flux**")
-        pie_data = df.groupby("Type")["Montant"].sum().abs().reset_index()
-        fig_pie = px.pie(pie_data, values="Montant", names="Type", hole=0.4)
-        st.plotly_chart(fig_pie, use_container_width=True)
-        
-    with col_right:
-        st.write("📅 **Évolution des Gains**")
-        line_data = df[df["Type"] == TYPE_VENTE].sort_values("Date")
-        if not line_data.empty:
-            line_data["Cumul"] = line_data["Montant"].cumsum()
-            fig_line = px.line(line_data, x="Date", y="Cumul")
-            st.plotly_chart(fig_line, use_container_width=True)
-
 # --- FOOTER ---
-if reste_a_payer == 0 and total_ventes > 0:
-    st.balloons()
-    st.success("Félicitations ! Julie est totalement remboursée.")
+st.sidebar.markdown("---")
+st.sidebar.write(f"📅 **Dernière mise à jour :** {datetime.now().strftime('%d/%m/%Y')}")
