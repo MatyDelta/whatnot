@@ -376,7 +376,8 @@ with tab1:
                     st.write(f"**{row['Date'].strftime('%d/%m/%Y')}**")
                 
                 with col_desc:
-                    st.write(f"{row['Type']} - {row['Description']}")
+                    desc_display = str(row['Description']) if pd.notna(row['Description']) else 'Sans description'
+                    st.write(f"{row['Type']} - {desc_display}")
                 
                 with col_amount:
                     if row['Montant'] > 0:
@@ -421,13 +422,15 @@ with tab2:
             st.markdown(f"**{len(julie_pending)} transaction(s) en attente**")
             
             for idx, row in julie_pending.iterrows():
-                with st.expander(f"💰 {row['Montant_Part']:.2f} € - {str(row['Description'])[:30] if pd.notna(row['Description']) else 'Sans description'}"):
+                desc = str(row['Description'])[:30] if pd.notna(row['Description']) else 'Sans description'
+                
+                with st.expander(f"💰 {row['Montant_Part']:.2f} € - {desc}"):
                     st.write(f"📅 Date: {row['Date'].strftime('%d/%m/%Y')}")
                     st.write(f"🏷️ Type: {row['Type']}")
                     st.write(f"💵 Montant total: {row['Montant']:.2f} €")
                     st.write(f"👤 Part Julie: {row['Montant_Part']:.2f} €")
                     
-                    if row['Notes']:
+                    if pd.notna(row['Notes']) and row['Notes']:
                         st.info(f"📌 {row['Notes']}")
                     
                     if st.button("✅ Marquer comme Payé", key=f"julie_pay_{idx}", use_container_width=True):
@@ -459,17 +462,19 @@ with tab2:
         # Liste des paiements en attente
         matheo_pending = df[df['Statut_Matheo'] == 'En attente'].copy()
         
-        with st.expander(f"💰 {row['Montant_Part']:.2f} € - {str(row['Description'])[:30] if pd.notna(row['Description']) else 'Sans description'}"):
+        if not matheo_pending.empty:
             st.markdown(f"**{len(matheo_pending)} transaction(s) en attente**")
             
             for idx, row in matheo_pending.iterrows():
-                with st.expander(f"💰 {row['Montant_Part']:.2f} € - {row['Description'][:30]}"):
+                desc = str(row['Description'])[:30] if pd.notna(row['Description']) else 'Sans description'
+                
+                with st.expander(f"💰 {row['Montant_Part']:.2f} € - {desc}"):
                     st.write(f"📅 Date: {row['Date'].strftime('%d/%m/%Y')}")
                     st.write(f"🏷️ Type: {row['Type']}")
                     st.write(f"💵 Montant total: {row['Montant']:.2f} €")
                     st.write(f"👤 Part Mathéo: {row['Montant_Part']:.2f} €")
                     
-                    if row['Notes']:
+                    if pd.notna(row['Notes']) and row['Notes']:
                         st.info(f"📌 {row['Notes']}")
                     
                     if st.button("✅ Marquer comme Payé", key=f"matheo_pay_{idx}", use_container_width=True):
@@ -608,90 +613,3 @@ with tab5:
     
     # Application des filtres
     df_filtered = df.copy()
-    
-    if filter_type:
-        df_filtered = df_filtered[df_filtered['Type'].isin(filter_type)]
-    
-    if filter_year:
-        df_filtered = df_filtered[df_filtered['Année'].isin(filter_year)]
-    
-    if filter_status == "En attente":
-        df_filtered = df_filtered[(df_filtered['Statut_Julie'] == 'En attente') | (df_filtered['Statut_Matheo'] == 'En attente')]
-    elif filter_status == "Payé (Julie)":
-        df_filtered = df_filtered[df_filtered['Statut_Julie'] == 'Payé']
-    elif filter_status == "Payé (Mathéo)":
-        df_filtered = df_filtered[df_filtered['Statut_Matheo'] == 'Payé']
-    elif filter_status == "Soldé":
-        df_filtered = df_filtered[(df_filtered['Statut_Julie'] == 'Payé') & (df_filtered['Statut_Matheo'] == 'Payé')]
-    
-    st.divider()
-    
-    # Éditeur de données
-    st.markdown(f"**{len(df_filtered)} opération(s) affichée(s)**")
-    
-    edited_df = st.data_editor(
-        df_filtered,
-        use_container_width=True,
-        hide_index=True,
-        num_rows="dynamic",
-        column_config={
-            "Date": st.column_config.DateColumn("Date", format="DD/MM/YYYY"),
-            "Type": st.column_config.SelectboxColumn(
-                "Type",
-                options=["💰 Vente Whatnot", "🛒 Achat Stock", "💸 Frais Divers", "🎁 Remboursement"]
-            ),
-            "Montant": st.column_config.NumberColumn("Montant Total", format="%.2f €"),
-            "Montant_Part": st.column_config.NumberColumn("Part (50%)", format="%.2f €"),
-            "Statut_Julie": st.column_config.SelectboxColumn(
-                "Statut Julie",
-                options=["En attente", "Payé"]
-            ),
-            "Statut_Matheo": st.column_config.SelectboxColumn(
-                "Statut Mathéo",
-                options=["En attente", "Payé"]
-            ),
-            "Date_Remb_Julie": st.column_config.DateColumn("Remb. Julie", format="DD/MM/YYYY"),
-            "Date_Remb_Matheo": st.column_config.DateColumn("Remb. Mathéo", format="DD/MM/YYYY"),
-        }
-    )
-    
-    st.divider()
-    
-    # Boutons d'action
-    action_col1, action_col2, action_col3 = st.columns(3)
-    
-    with action_col1:
-        if st.button("💾 Sauvegarder", type="primary", use_container_width=True):
-            st.session_state.data = edited_df
-            if save_data(edited_df):
-                st.success("✅ Données sauvegardées avec succès !")
-                st.rerun()
-            else:
-                st.error("❌ Erreur lors de la sauvegarde")
-    
-    with action_col2:
-        csv = df_filtered.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-        st.download_button(
-            "📥 Exporter CSV",
-            csv,
-            f"mjtgc_export_{datetime.now().strftime('%Y%m%d')}.csv",
-            "text/csv",
-            use_container_width=True
-        )
-    
-    with action_col3:
-        if st.button("🗑️ Supprimer les lignes sélectionnées", use_container_width=True):
-            st.warning("⚠️ Fonctionnalité à venir")
-
-# --- FOOTER ---
-st.divider()
-footer_col1, footer_col2, footer_col3 = st.columns(3)
-
-with footer_col1:
-    st.caption(f"🔄 Dernière synchro: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
-
-with footer_col2:
-    st.caption(f"📊 {len(df)} opération(s) au total")
-
-with footer_col3:
-    st.caption("💎 MJTGC Tracker Pro v2.0")
