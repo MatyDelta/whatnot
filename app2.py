@@ -17,7 +17,6 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 # --- FONCTIONS TECHNIQUES ---
 
 def simple_ocr(image):
-    """Analyse l'image pour extraire Date, Magasin et Prix"""
     image = image.convert('L')
     text = pytesseract.image_to_string(image, lang='fra')
     prices = re.findall(r"(\d+[\.,]\d{2})", text)
@@ -29,13 +28,16 @@ def simple_ocr(image):
     return date_found, name, price
 
 def load_data():
-    """Charge les données depuis Google Sheets avec rafraîchissement forcé"""
     data = conn.read(ttl="0s")
     if data is not None and not data.empty:
         data = data.dropna(how='all')
+        # S'assurer que les colonnes vitales existent, sinon les créer vides
+        for col in ['Date', 'Type', 'Description', 'Montant', 'Payé', 'Année']:
+            if col not in data.columns:
+                data[col] = "" if col != 'Montant' else 0.0
+        
         data['Date'] = pd.to_datetime(data['Date'], errors='coerce')
         data['Montant'] = pd.to_numeric(data['Montant'], errors='coerce').fillna(0)
-        # Amélioration : Meilleure détection des cases cochées
         data['Payé'] = data['Payé'].astype(str).str.lower().str.strip().isin(['true', '1', 'vrai', 'x', 'v', 'vrai'])
     return data
 
@@ -43,7 +45,7 @@ def load_data():
 if 'data' not in st.session_state:
     st.session_state.data = load_data()
 
-# --- BARRE LATÉRALE (Scanner + Saisie) ---
+# --- BARRE LATÉRALE ---
 st.sidebar.header("📸 Scanner un Ticket")
 file = st.sidebar.file_uploader("Prendre en photo", type=['jpg', 'jpeg', 'png'])
 
@@ -77,13 +79,10 @@ if st.sidebar.button("Enregistrer l'opération"):
     temp_df = st.session_state.data.copy()
     paye_status = False
     
-    # AMÉLIORATION : LOGIQUE DE REMBOURSEMENT QUI SOLDE LES DETTES
     if type_op == "Remboursement à Julie":
         valeur = -montant
         paye_status = True
-        montant_a_solder = montant * 2 # On multiplie par 2 car Julie prend 50% du montant brut
-        
-        # On cherche les ventes non payées pour les passer en "Payé"
+        montant_a_solder = montant * 2
         idx_non_payes = temp_df[(temp_df['Montant'] > 0) & (temp_df['Payé'] == False)].index
         for i in idx_non_payes:
             if montant_a_solder > 0:
@@ -102,30 +101,23 @@ if st.sidebar.button("Enregistrer l'opération"):
     }])
     
     st.session_state.data = pd.concat([temp_df, new_row], ignore_index=True)
-    
-    # SAUVEGARDE
     df_save = st.session_state.data.copy()
     df_save['Date'] = df_save['Date'].dt.strftime('%Y-%m-%d')
     conn.update(data=df_save)
-    
-    for key in ['scan_date', 'scan_name', 'scan_price', 'show_scan_info']:
-        st.session_state.pop(key, None)
-    st.sidebar.success("Synchronisé !")
+    st.cache_data.clear()
     st.rerun()
 
-# --- CALCULS MJTGC ---
+# --- CALCULS ---
 df_all = st.session_state.data.sort_values("Date").reset_index(drop=True)
 
-# AMÉLIORATION : HISTORIQUE DES LIVES DYNAMIQUE
+# Historique des Lives
 lives_history = []
 achats = df_all[df_all["Type"] == "Achat Stock (Dépense)"].reset_index()
 ventes = df_all[df_all["Type"] == "Vente (Gain net Whatnot)"].reset_index()
-
 for k in range(max(len(achats), len(ventes))):
     res = {"Date": None, "Investissement": 0.0, "Vente": 0.0, "Bénéfice": 0.0}
     if k < len(ventes):
-        res["Date"] = ventes.loc[k, "Date"]
-        res["Vente"] = ventes.loc[k, "Montant"]
+        res["Date"], res["Vente"] = ventes.loc[k, "Date"], ventes.loc[k, "Montant"]
     if k < len(achats):
         if res["Date"] is None: res["Date"] = achats.loc[k, "Date"]
         res["Investissement"] = abs(achats.loc[k, "Montant"])
@@ -133,7 +125,6 @@ for k in range(max(len(achats), len(ventes))):
     if res["Date"] is not None: lives_history.append(res)
 df_lives = pd.DataFrame(lives_history)
 
-# Variables de performance
 ca_total = df_all[df_all["Montant"] > 0]["Montant"].sum()
 depenses_stock = abs(df_all[df_all["Type"] == "Achat Stock (Dépense)"]["Montant"].sum())
 gains_en_attente = df_all[(df_all["Montant"] > 0) & (df_all["Payé"] == False)]["Montant"].sum()
@@ -151,38 +142,40 @@ with tab1:
     c3.metric("Bénéfice Brut", f"{(ca_total - depenses_stock):.2f} €")
     
     st.divider()
-    st.subheader("💳 Paiements")
     cp, cv = st.columns(2)
     cp.success(f"💰 Gains à solder : **{gains_en_attente:.2f} €**")
     cv.warning(f"👉 Part Julie restante : **{(gains_en_attente/2):.2f} €**")
 
     st.divider()
-    st.subheader("📑 Journal (Suppression & Edition)")
-    # num_rows="dynamic" GARDE LA POSSIBILITÉ DE SUPPRIMER DES ENTRÉES
-    edited_df = st.data_editor(df_all.drop(columns=['Année']), use_container_width=True, hide_index=True, key="editor", num_rows="dynamic")
+    st.subheader("📑 Journal")
+    
+    # --- CORRECTION ICI : Drop sécurisé ---
+    df_display = df_all.copy()
+    if 'Année' in df_display.columns:
+        df_display = df_display.drop(columns=['Année'])
+        
+    edited_df = st.data_editor(df_display, use_container_width=True, hide_index=True, key="editor", num_rows="dynamic")
+    
     if st.button("💾 Sauvegarder les modifications"):
         df_save = edited_df.copy()
-        df_save['Date'] = pd.to_datetime(df_save['Date']).dt.strftime('%Y-%m-%d')
+        # On rajoute l'année si elle a disparu pour la base de données
+        if 'Date' in df_save.columns:
+            df_save['Date'] = pd.to_datetime(df_save['Date'])
+            df_save['Année'] = df_save['Date'].dt.year.astype(str)
+            df_save['Date'] = df_save['Date'].dt.strftime('%Y-%m-%d')
         conn.update(data=df_save)
-        st.cache_data.clear() # Force le rafraîchissement des calculs
+        st.cache_data.clear()
+        st.session_state.data = load_data()
         st.rerun()
 
 with tab2:
-    st.subheader("🍿 Rentabilité Sessions")
     if not df_lives.empty:
         st.dataframe(df_lives, use_container_width=True, hide_index=True)
         st.plotly_chart(px.line(df_lives, x="Date", y="Bénéfice", markers=True), use_container_width=True)
-    else:
-        st.info("Aucun live détecté.")
 
 with tab3:
-    st.subheader("👩‍💻 Score Julie")
-    st.metric("Déjà versé (Historique)", f"{total_paye_julie:.2f} €")
-    st.metric("Gains validés (Part 50%)", f"{score_partage:.2f} €")
-    if gains_en_attente <= 0:
-        st.balloons()
-        st.success("Julie est à jour !")
+    st.metric("Déjà versé", f"{total_paye_julie:.2f} €")
+    st.metric("Gains validés (50%)", f"{score_partage:.2f} €")
 
 with tab4:
-    st.subheader("👨‍💻 Score Mathéo")
-    st.metric("Gains validés (Part 50%)", f"{score_partage:.2f} €")
+    st.metric("Gains validés (50%)", f"{score_partage:.2f} €")
