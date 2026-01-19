@@ -31,7 +31,6 @@ def load_data():
     data = conn.read(ttl="0s")
     if data is not None and not data.empty:
         data = data.dropna(how='all')
-        # S'assurer que les colonnes vitales existent, sinon les créer vides
         for col in ['Date', 'Type', 'Description', 'Montant', 'Payé', 'Année']:
             if col not in data.columns:
                 data[col] = "" if col != 'Montant' else 0.0
@@ -64,7 +63,7 @@ if st.session_state.get('show_scan_info'):
     st.sidebar.success("✅ Analyse terminée !")
     st.sidebar.info(f"🏢 {st.session_state.get('scan_name')} | 📅 {st.session_state.get('scan_date').strftime('%d/%m/%Y')} | 💶 {st.session_state.get('scan_price'):.2f} €")
     if st.sidebar.button("Masquer le résumé"):
-        st.session_state['show_scan_info'] = False
+        st.session_state.pop('show_scan_info', None)
         st.rerun()
 
 st.sidebar.divider()
@@ -108,19 +107,19 @@ if st.sidebar.button("Enregistrer l'opération"):
     st.rerun()
 
 # --- CALCULS ---
-df_all = st.session_state.data.sort_values("Date").reset_index(drop=True)
+df_all = st.session_state.data.sort_values("Date", ascending=False).reset_index(drop=True)
 
-# Historique des Lives
+# Historique des Lives Amélioré
 lives_history = []
-achats = df_all[df_all["Type"] == "Achat Stock (Dépense)"].reset_index()
-ventes = df_all[df_all["Type"] == "Vente (Gain net Whatnot)"].reset_index()
-for k in range(max(len(achats), len(ventes))):
+achats_live = df_all[df_all["Type"] == "Achat Stock (Dépense)"].copy()
+ventes_live = df_all[df_all["Type"] == "Vente (Gain net Whatnot)"].copy()
+for k in range(max(len(achats_live), len(ventes_live))):
     res = {"Date": None, "Investissement": 0.0, "Vente": 0.0, "Bénéfice": 0.0}
-    if k < len(ventes):
-        res["Date"], res["Vente"] = ventes.loc[k, "Date"], ventes.loc[k, "Montant"]
-    if k < len(achats):
-        if res["Date"] is None: res["Date"] = achats.loc[k, "Date"]
-        res["Investissement"] = abs(achats.loc[k, "Montant"])
+    if k < len(ventes_live):
+        res["Date"], res["Vente"] = ventes_live.iloc[k]["Date"], ventes_live.iloc[k]["Montant"]
+    if k < len(achats_live):
+        if res["Date"] is None: res["Date"] = achats_live.iloc[k]["Date"]
+        res["Investissement"] = abs(achats_live.iloc[k]["Montant"])
     res["Bénéfice"] = res["Vente"] - res["Investissement"]
     if res["Date"] is not None: lives_history.append(res)
 df_lives = pd.DataFrame(lives_history)
@@ -147,25 +146,32 @@ with tab1:
     cv.warning(f"👉 Part Julie restante : **{(gains_en_attente/2):.2f} €**")
 
     st.divider()
-    st.subheader("📑 Journal")
+    st.subheader("📑 Journal des Transactions")
+    st.info("💡 Pour supprimer : cochez la ligne à gauche, appuyez sur 'Suppr' (clavier), puis cliquez sur Sauvegarder.")
     
-    # --- CORRECTION ICI : Drop sécurisé ---
     df_display = df_all.copy()
     if 'Année' in df_display.columns:
         df_display = df_display.drop(columns=['Année'])
         
-    edited_df = st.data_editor(df_display, use_container_width=True, hide_index=True, key="editor", num_rows="dynamic")
+    # Utilisation de session_state pour capturer les changements
+    edited_df = st.data_editor(df_display, use_container_width=True, hide_index=True, key="journal_editor", num_rows="dynamic")
     
-    if st.button("💾 Sauvegarder les modifications"):
-        df_save = edited_df.copy()
-        # On rajoute l'année si elle a disparu pour la base de données
-        if 'Date' in df_save.columns:
-            df_save['Date'] = pd.to_datetime(df_save['Date'])
-            df_save['Année'] = df_save['Date'].dt.year.astype(str)
-            df_save['Date'] = df_save['Date'].dt.strftime('%Y-%m-%d')
+    if st.button("💾 Sauvegarder les modifications (Edition/Suppression)"):
+        # On reconstruit le DataFrame final avec l'année
+        new_df = edited_df.copy()
+        new_df['Date'] = pd.to_datetime(new_df['Date'])
+        new_df['Année'] = new_df['Date'].dt.year.astype(str)
+        
+        # Mise à jour de la base de données
+        st.session_state.data = new_df
+        
+        # Formatage pour Google Sheets
+        df_save = new_df.copy()
+        df_save['Date'] = df_save['Date'].dt.strftime('%Y-%m-%d')
         conn.update(data=df_save)
+        
         st.cache_data.clear()
-        st.session_state.data = load_data()
+        st.success("Base de données mise à jour avec succès !")
         st.rerun()
 
 with tab2:
