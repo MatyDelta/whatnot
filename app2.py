@@ -421,7 +421,7 @@ with tab2:
             st.markdown(f"**{len(julie_pending)} transaction(s) en attente**")
             
             for idx, row in julie_pending.iterrows():
-                with st.expander(f"💰 {row['Montant_Part']:.2f} € - {row['Description'][:30]}"):
+                with st.expander(f"💰 {row['Montant_Part']:.2f} € - {str(row['Description'])[:30] if pd.notna(row['Description']) else 'Sans description'}"):
                     st.write(f"📅 Date: {row['Date'].strftime('%d/%m/%Y')}")
                     st.write(f"🏷️ Type: {row['Type']}")
                     st.write(f"💵 Montant total: {row['Montant']:.2f} €")
@@ -459,7 +459,7 @@ with tab2:
         # Liste des paiements en attente
         matheo_pending = df[df['Statut_Matheo'] == 'En attente'].copy()
         
-        if not matheo_pending.empty:
+        with st.expander(f"💰 {row['Montant_Part']:.2f} € - {str(row['Description'])[:30] if pd.notna(row['Description']) else 'Sans description'}"):
             st.markdown(f"**{len(matheo_pending)} transaction(s) en attente**")
             
             for idx, row in matheo_pending.iterrows():
