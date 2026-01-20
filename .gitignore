@@ -1,0 +1,14 @@
+# Secrets - NE JAMAIS COMMIT !
+.streamlit/secrets.toml
+secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+
+# Data
+*.csv
+*.xlsx
+
+# OS
+.DS_Store
