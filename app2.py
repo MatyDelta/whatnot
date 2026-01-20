@@ -62,7 +62,7 @@ def check_password():
     if "authenticated" in st.session_state and st.session_state.authenticated:
         return True
     
-    # CSS avancé pour l'écran de connexion
+    # CSS avancé pour l'écran de connexion - VERSION COMPACTE
     st.markdown("""
     <style>
         /* Fond dégradé animé */
@@ -78,7 +78,7 @@ def check_password():
             100% { background-position: 0% 50%; }
         }
         
-        /* Container principal */
+        /* Container principal - COMPACT */
         .login-main-container {
             display: flex;
             justify-content: center;
@@ -87,22 +87,22 @@ def check_password():
             padding: 20px;
         }
         
-        /* Carte de connexion */
+        /* Carte de connexion - RÉDUITE */
         .login-card {
             background: rgba(255, 255, 255, 0.95);
             backdrop-filter: blur(10px);
-            border-radius: 30px;
-            padding: 50px;
-            max-width: 480px;
+            border-radius: 20px;
+            padding: 35px;
+            max-width: 380px;
             width: 100%;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            animation: fadeInUp 0.6s ease-out;
+            box-shadow: 0 15px 40px rgba(0, 0, 0, 0.25);
+            animation: fadeInUp 0.5s ease-out;
         }
         
         @keyframes fadeInUp {
             from {
                 opacity: 0;
-                transform: translateY(30px);
+                transform: translateY(20px);
             }
             to {
                 opacity: 1;
@@ -110,54 +110,54 @@ def check_password():
             }
         }
         
-        /* Logo et titre */
+        /* Logo et titre - COMPACT */
         .login-logo {
             text-align: center;
-            margin-bottom: 40px;
+            margin-bottom: 25px;
         }
         
         .login-logo-icon {
-            font-size: 80px;
-            margin-bottom: 20px;
+            font-size: 50px;
+            margin-bottom: 12px;
             display: inline-block;
             animation: floatAnimation 3s ease-in-out infinite;
         }
         
         @keyframes floatAnimation {
             0%, 100% { transform: translateY(0px); }
-            50% { transform: translateY(-10px); }
+            50% { transform: translateY(-8px); }
         }
         
         .login-title {
-            font-size: 42px;
+            font-size: 32px;
             font-weight: 800;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
-            margin-bottom: 10px;
-            letter-spacing: -1px;
+            margin-bottom: 6px;
+            letter-spacing: -0.5px;
         }
         
         .login-subtitle {
             color: #6b7280;
-            font-size: 18px;
+            font-size: 15px;
             font-weight: 500;
-            margin-bottom: 10px;
+            margin-bottom: 6px;
         }
         
         .login-tagline {
             color: #9ca3af;
-            font-size: 14px;
+            font-size: 12px;
             font-style: italic;
         }
         
-        /* Inputs */
+        /* Inputs - COMPACT */
         .stTextInput > div > div > input {
-            border-radius: 15px !important;
+            border-radius: 12px !important;
             border: 2px solid #e5e7eb !important;
-            padding: 15px 20px !important;
-            font-size: 16px !important;
+            padding: 12px 16px !important;
+            font-size: 14px !important;
             transition: all 0.3s ease !important;
         }
         
@@ -166,11 +166,11 @@ def check_password():
             box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1) !important;
         }
         
-        /* Boutons */
+        /* Boutons - COMPACT */
         .stButton > button {
-            border-radius: 15px !important;
-            padding: 15px 30px !important;
-            font-size: 16px !important;
+            border-radius: 12px !important;
+            padding: 12px 24px !important;
+            font-size: 14px !important;
             font-weight: 600 !important;
             transition: all 0.3s ease !important;
         }
@@ -182,43 +182,51 @@ def check_password():
         
         .stButton > button[kind="primary"]:hover {
             transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3) !important;
+            box-shadow: 0 8px 16px rgba(102, 126, 234, 0.3) !important;
         }
         
-        /* Footer */
+        /* Footer - COMPACT */
         .login-footer {
             text-align: center;
-            margin-top: 40px;
-            padding-top: 30px;
+            margin-top: 25px;
+            padding-top: 20px;
             border-top: 1px solid #e5e7eb;
         }
         
         .login-footer-text {
             color: #9ca3af;
-            font-size: 13px;
-            margin-bottom: 10px;
+            font-size: 11px;
+            margin-bottom: 8px;
         }
         
         .login-footer-badge {
             display: inline-block;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            padding: 6px 16px;
-            border-radius: 20px;
-            font-size: 12px;
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-size: 11px;
             font-weight: 600;
         }
         
-        /* Expander personnalisé */
+        /* Expander - COMPACT */
         .streamlit-expanderHeader {
             background-color: #f9fafb !important;
-            border-radius: 10px !important;
+            border-radius: 8px !important;
             font-weight: 500 !important;
+            font-size: 13px !important;
+            padding: 8px 12px !important;
+        }
+        
+        /* Form title - COMPACT */
+        .stMarkdown h3 {
+            font-size: 18px !important;
+            margin-bottom: 15px !important;
         }
     </style>
     """, unsafe_allow_html=True)
     
-    # Structure HTML
+    # Structure HTML - COMPACTE
     st.markdown("""
     <div class="login-main-container">
         <div class="login-card">
@@ -274,33 +282,25 @@ def check_password():
             else:
                 st.error("❌ Identifiants incorrects")
     
-    # Aide
+    # Aide - COMPACTE
     with st.expander("💡 Besoin d'aide ?"):
         st.markdown("""
         **Comptes disponibles :**
         
-        | Utilisateur | Mot de passe |
-        |------------|--------------|
+        | User | Password |
+        |------|----------|
         | Julie | `julie2025` |
         | Matheo | `matheo2025` |
         | Admin | `admin2025` |
         
-        ⚠️ **Important :** Changez ces mots de passe par défaut !
-        
-        Pour modifier les mots de passe, créez `.streamlit/secrets.toml` :
-        ```toml
-        [passwords]
-        julie = "votre_nouveau_mdp"
-        matheo = "votre_nouveau_mdp"
-        admin = "votre_nouveau_mdp"
-        ```
+        ⚠️ Changez ces mots de passe dans `.streamlit/secrets.toml`
         """)
     
     # Footer
     st.markdown("""
     <div class="login-footer">
         <div class="login-footer-text">Développé avec ❤️ pour MJTGC</div>
-        <div class="login-footer-badge">🔐 Connexion Sécurisée</div>
+        <div class="login-footer-badge">🔐 Sécurisé</div>
     </div>
     """, unsafe_allow_html=True)
     
@@ -650,7 +650,18 @@ with st.sidebar:
                 st.error("⚠️ Remplissez tous les champs obligatoires")
 
 # --- ONGLETS PRINCIPAUX ---
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 Dashboard", "🎬 Historique Lives", "💰 Remboursements Julie", "👨‍💻 Mathéo", "🎯 Objectifs", "📋 Données"])
+# Créer la liste des onglets selon le rôle de l'utilisateur
+if st.session_state.username == "Admin":
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        "📊 Dashboard", "🎬 Historique Lives", "💰 Remboursements Julie", 
+        "👨‍💻 Mathéo", "🎯 Objectifs", "📋 Données", "👑 Admin"
+    ])
+else:
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "📊 Dashboard", "🎬 Historique Lives", "💰 Remboursements Julie", 
+        "👨‍💻 Mathéo", "🎯 Objectifs", "📋 Données"
+    ])
+    tab7 = None  # Pour éviter les erreurs si on référence tab7
 
 # ========== TAB 1 : DASHBOARD ==========
 with tab1:
@@ -1105,6 +1116,213 @@ with tab6:
         st.download_button("📥 Télécharger les données (CSV)", csv, "whatnot_data.csv", "text/csv", key='download-csv')
     else:
         st.info("Aucune donnée à afficher")
+
+# ========== TAB 7 : ADMIN (Uniquement pour les admins) ==========
+if st.session_state.username == "Admin" and tab7:
+    with tab7:
+        st.markdown("### 👑 Panneau d'Administration")
+        
+        st.info("🔐 **Zone réservée aux administrateurs** - Gestion des utilisateurs et sécurité")
+        
+        # Section 1 : Changement des mots de passe
+        st.markdown("#### 🔑 Gestion des Mots de Passe")
+        
+        with st.expander("📝 Changer le mot de passe d'un utilisateur", expanded=True):
+            col_user, col_pass = st.columns(2)
+            
+            with col_user:
+                user_to_change = st.selectbox(
+                    "👤 Sélectionner l'utilisateur",
+                    ["Julie", "Matheo", "Admin"],
+                    help="Choisissez l'utilisateur dont vous voulez changer le mot de passe"
+                )
+            
+            with col_pass:
+                new_password = st.text_input(
+                    "🔐 Nouveau mot de passe",
+                    type="password",
+                    placeholder="Minimum 8 caractères",
+                    help="Utilisez un mot de passe fort"
+                )
+            
+            new_password_confirm = st.text_input(
+                "🔐 Confirmer le mot de passe",
+                type="password",
+                placeholder="Retapez le mot de passe",
+                key="confirm_password"
+            )
+            
+            col_btn1, col_btn2 = st.columns([1, 3])
+            
+            with col_btn1:
+                if st.button("💾 Changer le mot de passe", type="primary", use_container_width=True):
+                    # Vérifications
+                    if not new_password:
+                        st.error("⚠️ Le mot de passe ne peut pas être vide")
+                    elif len(new_password) < 8:
+                        st.error("⚠️ Le mot de passe doit contenir au moins 8 caractères")
+                    elif new_password != new_password_confirm:
+                        st.error("⚠️ Les mots de passe ne correspondent pas")
+                    else:
+                        # Sauvegarder dans secrets (affichage du code à copier)
+                        st.success(f"✅ Mot de passe pour {user_to_change} prêt à être changé !")
+                        st.markdown("---")
+                        st.markdown("**📋 Copiez cette configuration dans `.streamlit/secrets.toml` :**")
+                        
+                        # Afficher la configuration complète
+                        st.code(f"""[passwords]
+julie = "{new_password if user_to_change == 'Julie' else 'julie2025'}"
+matheo = "{new_password if user_to_change == 'Matheo' else 'matheo2025'}"
+admin = "{new_password if user_to_change == 'Admin' else 'admin2025'}"
+""", language="toml")
+                        
+                        st.warning("⚠️ **Important :** Après avoir modifié `secrets.toml`, redémarrez l'application pour que les changements prennent effet.")
+                        
+                        if user_to_change == "Admin":
+                            st.error("🚨 **Attention :** Vous changez le mot de passe Admin ! Ne l'oubliez pas !")
+        
+        st.divider()
+        
+        # Section 2 : Informations système
+        st.markdown("#### 📊 Informations Système")
+        
+        col_info1, col_info2, col_info3 = st.columns(3)
+        
+        with col_info1:
+            st.metric("👥 Utilisateurs actifs", "3", help="Julie, Mathéo, Admin")
+        
+        with col_info2:
+            total_operations = len(df) if not df.empty else 0
+            st.metric("📝 Opérations totales", total_operations)
+        
+        with col_info3:
+            if not df.empty and 'Saisi_Par' in df.columns:
+                operations_par_user = df['Saisi_Par'].value_counts().to_dict()
+                most_active = max(operations_par_user, key=operations_par_user.get) if operations_par_user else "Aucun"
+                st.metric("🏆 Utilisateur le plus actif", most_active)
+            else:
+                st.metric("🏆 Utilisateur le plus actif", "N/A")
+        
+        st.divider()
+        
+        # Section 3 : Activité par utilisateur
+        st.markdown("#### 📈 Activité des Utilisateurs")
+        
+        if not df.empty and 'Saisi_Par' in df.columns:
+            activity_data = df['Saisi_Par'].value_counts().reset_index()
+            activity_data.columns = ['Utilisateur', 'Nombre d\'opérations']
+            
+            col_chart, col_table = st.columns([2, 1])
+            
+            with col_chart:
+                fig_activity = px.bar(
+                    activity_data,
+                    x='Utilisateur',
+                    y='Nombre d\'opérations',
+                    color='Utilisateur',
+                    title="Opérations par utilisateur",
+                    color_discrete_map={
+                        'Julie': '#ec4899',
+                        'Matheo': '#3b82f6',
+                        'Admin': '#10b981'
+                    }
+                )
+                st.plotly_chart(fig_activity, use_container_width=True)
+            
+            with col_table:
+                st.dataframe(
+                    activity_data,
+                    hide_index=True,
+                    use_container_width=True
+                )
+        else:
+            st.info("Aucune donnée d'activité disponible")
+        
+        st.divider()
+        
+        # Section 4 : Sécurité
+        st.markdown("#### 🔒 Recommandations de Sécurité")
+        
+        security_checks = []
+        
+        # Vérifier si les mots de passe par défaut sont utilisés
+        try:
+            current_users = get_users()
+            default_julie = hash_password("julie2025")
+            default_matheo = hash_password("matheo2025")
+            default_admin = hash_password("admin2025")
+            
+            if current_users.get("Julie") == default_julie:
+                security_checks.append(("❌", "Julie utilise le mot de passe par défaut", "danger"))
+            else:
+                security_checks.append(("✅", "Mot de passe Julie personnalisé", "success"))
+            
+            if current_users.get("Matheo") == default_matheo:
+                security_checks.append(("❌", "Matheo utilise le mot de passe par défaut", "danger"))
+            else:
+                security_checks.append(("✅", "Mot de passe Matheo personnalisé", "success"))
+            
+            if current_users.get("Admin") == default_admin:
+                security_checks.append(("❌", "Admin utilise le mot de passe par défaut", "danger"))
+            else:
+                security_checks.append(("✅", "Mot de passe Admin personnalisé", "success"))
+        except:
+            security_checks.append(("⚠️", "Impossible de vérifier les mots de passe", "warning"))
+        
+        # Afficher les vérifications
+        for icon, message, status in security_checks:
+            if status == "danger":
+                st.error(f"{icon} {message}")
+            elif status == "success":
+                st.success(f"{icon} {message}")
+            else:
+                st.warning(f"{icon} {message}")
+        
+        st.divider()
+        
+        # Section 5 : Actions administratives
+        st.markdown("#### ⚙️ Actions Administratives")
+        
+        col_action1, col_action2 = st.columns(2)
+        
+        with col_action1:
+            if st.button("🗑️ Effacer le cache", use_container_width=True):
+                st.cache_data.clear()
+                st.success("✅ Cache effacé !")
+                st.rerun()
+        
+        with col_action2:
+            if st.button("📊 Exporter tout (CSV)", use_container_width=True):
+                if not df.empty:
+                    csv = df.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        "📥 Télécharger",
+                        csv,
+                        f"export_complet_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        "text/csv",
+                        key='admin-download',
+                        use_container_width=True
+                    )
+                else:
+                    st.warning("Aucune donnée à exporter")
+        
+        st.divider()
+        
+        # Section 6 : Logs (optionnel)
+        st.markdown("#### 📜 Dernières Actions")
+        
+        if not df.empty:
+            recent_actions = df.sort_values('Date', ascending=False).head(5)
+            
+            for idx, row in recent_actions.iterrows():
+                action_time = row['Date'].strftime('%d/%m/%Y %H:%M') if pd.notna(row['Date']) else 'Date inconnue'
+                action_user = row['Saisi_Par'] if pd.notna(row['Saisi_Par']) and row['Saisi_Par'] else 'Utilisateur inconnu'
+                action_type = row['Type'] if pd.notna(row['Type']) else 'Type inconnu'
+                action_desc = row['Description'] if pd.notna(row['Description']) else 'Sans description'
+                
+                st.text(f"🕐 {action_time} | 👤 {action_user} | {action_type} - {action_desc[:40]}...")
+        else:
+            st.info("Aucune action enregistrée")
 
 # --- FOOTER ---
 st.divider()
