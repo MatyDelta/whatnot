@@ -14,8 +14,244 @@ except ImportError:
 from PIL import Image
 import pytesseract
 import re
+import hashlib
 
 # --- CONFIGURATION ---
+"""
+Module d'authentification pour Whatnot Tracker Pro V2
+À intégrer au début de whatnot_tracker_v2.py
+"""
+
+import streamlit as st
+import hashlib
+from datetime import datetime
+
+# --- CONFIGURATION DE L'AUTHENTIFICATION ---
+
+def hash_password(password):
+    """Hash un mot de passe avec SHA256"""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def get_users():
+    """Récupère les utilisateurs depuis les secrets ou utilise les valeurs par défaut"""
+    try:
+        # Essayer de charger depuis secrets.toml
+        return {
+            "Julie": hash_password(st.secrets.get("passwords", {}).get("julie", "julie2025")),
+            "Matheo": hash_password(st.secrets.get("passwords", {}).get("matheo", "matheo2025")),
+            "Admin": hash_password(st.secrets.get("passwords", {}).get("admin", "admin2025"))
+        }
+    except:
+        # Valeurs par défaut si secrets.toml n'est pas configuré
+        return {
+            "Julie": hash_password("julie2025"),
+            "Matheo": hash_password("matheo2025"),
+            "Admin": hash_password("admin2025")
+        }
+
+def check_password():
+    """Vérifie le mot de passe et retourne True si correct"""
+    
+    USERS = get_users()
+    
+    # Si déjà connecté, vérifier la session
+    if "authenticated" in st.session_state and st.session_state.authenticated:
+        return True
+    
+    # CSS pour la page de connexion
+    st.markdown("""
+    <style>
+        .login-container {
+            max-width: 450px;
+            margin: 80px auto;
+            padding: 50px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        .login-box {
+            background: white;
+            padding: 40px;
+            border-radius: 15px;
+        }
+        .login-title {
+            text-align: center;
+            color: #667eea;
+            font-size: 36px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        .login-subtitle {
+            text-align: center;
+            color: #6b7280;
+            font-size: 16px;
+            margin-bottom: 30px;
+        }
+        .stTextInput > div > div > input {
+            border-radius: 10px;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Interface de connexion
+    st.markdown("<div class='login-container'>", unsafe_allow_html=True)
+    st.markdown("<div class='login-box'>", unsafe_allow_html=True)
+    
+    st.markdown("<div class='login-title'>💎 MJTGC</div>", unsafe_allow_html=True)
+    st.markdown("<div class='login-subtitle'>Whatnot Tracker Pro</div>", unsafe_allow_html=True)
+    
+    # Formulaire de connexion
+    with st.form("login_form"):
+        username = st.text_input("👤 Nom d'utilisateur", placeholder="Julie, Matheo ou Admin")
+        password = st.text_input("🔑 Mot de passe", type="password", placeholder="Entrez votre mot de passe")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            submit = st.form_submit_button("🚀 Se Connecter", use_container_width=True, type="primary")
+        with col2:
+            reset = st.form_submit_button("🔄 Réinitialiser", use_container_width=True)
+        
+        if reset:
+            st.session_state.clear()
+            st.rerun()
+        
+        if submit:
+            if username in USERS and hash_password(password) == USERS[username]:
+                st.session_state.authenticated = True
+                st.session_state.username = username
+                st.session_state.login_time = datetime.now()
+                st.success(f"✅ Bienvenue {username} !")
+                st.balloons()
+                st.rerun()
+            else:
+                st.error("❌ Nom d'utilisateur ou mot de passe incorrect")
+    
+    # Aide pour les utilisateurs
+    with st.expander("❓ Aide à la connexion"):
+        st.info("""
+        **Comptes disponibles par défaut:**
+        - Julie / julie2025
+        - Matheo / matheo2025
+        - Admin / admin2025
+        
+        **Pour changer les mots de passe:**
+        
+        Créez un fichier `.streamlit/secrets.toml` :
+        ```toml
+        [passwords]
+        julie = "votre_nouveau_mdp"
+        matheo = "votre_nouveau_mdp"
+        admin = "votre_nouveau_mdp"
+        ```
+        
+        ⚠️ **Sécurité:** Changez impérativement ces mots de passe par défaut !
+        """)
+    
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+    
+    # Footer
+    st.markdown("""
+    <div style='text-align: center; color: #6b7280; margin-top: 30px; padding: 20px;'>
+        <p style='font-size: 12px;'>🔐 Connexion sécurisée - Vos données restent privées</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    return False
+
+def show_user_info():
+    """Affiche les informations de l'utilisateur connecté dans la sidebar"""
+    with st.sidebar:
+        st.markdown("---")
+        
+        # Badge utilisateur
+        user_emoji = {"Julie": "👩", "Matheo": "👨", "Admin": "👑"}.get(st.session_state.username, "👤")
+        st.markdown(f"### {user_emoji} **{st.session_state.username}**")
+        
+        # Temps de connexion
+        if "login_time" in st.session_state:
+            duration = datetime.now() - st.session_state.login_time
+            hours = int(duration.total_seconds() / 3600)
+            minutes = int((duration.total_seconds() % 3600) / 60)
+            
+            if hours > 0:
+                time_str = f"{hours}h {minutes}min"
+            else:
+                time_str = f"{minutes} min"
+            
+            st.caption(f"⏱️ Connecté depuis {time_str}")
+        
+        # Bouton de déconnexion
+        if st.button("🚪 Déconnexion", use_container_width=True, type="secondary"):
+            # Sauvegarder avant de se déconnecter
+            if 'data' in st.session_state and not st.session_state.data.empty:
+                try:
+                    # Importer la fonction save_data si elle existe
+                    from __main__ import save_data
+                    save_data(st.session_state.data)
+                except:
+                    pass
+            
+            st.session_state.clear()
+            st.success("✅ Déconnexion réussie")
+            st.rerun()
+        
+        st.markdown("---")
+
+def get_username_badge():
+    """Retourne un badge HTML avec le nom de l'utilisateur"""
+    user_colors = {
+        "Julie": "#ec4899",
+        "Matheo": "#3b82f6",
+        "Admin": "#10b981"
+    }
+    color = user_colors.get(st.session_state.username, "#6b7280")
+    
+    return f"""
+    <div style='
+        background: {color};
+        color: white;
+        padding: 8px 15px;
+        border-radius: 20px;
+        display: inline-block;
+        font-weight: 600;
+        font-size: 14px;
+    '>
+        👤 {st.session_state.username}
+    </div>
+    """
+
+# --- EXEMPLE D'UTILISATION ---
+"""
+Pour intégrer l'authentification dans whatnot_tracker_v2.py :
+
+1. Ajoutez cet import au début du fichier :
+   import hashlib
+
+2. Après st.set_page_config(...), ajoutez :
+   
+   # Vérifier l'authentification
+   if not check_password():
+       st.stop()
+
+3. Après le titre de l'app, ajoutez :
+   
+   show_user_info()
+
+4. Optionnel - Afficher le badge utilisateur dans le header :
+   
+   st.markdown(get_username_badge(), unsafe_allow_html=True)
+
+5. Dans le formulaire de nouvelle opération, ajoutez le champ Saisi_Par :
+   
+   "Saisi_Par": st.session_state.username
+
+6. Ajoutez la colonne 'Saisi_Par' dans la structure de données :
+   
+   Dans load_data(), ajoutez :
+   if 'Saisi_Par' not in data.columns:
+       data['Saisi_Par'] = ''
+"""
 st.set_page_config(
     page_title="MJTGC Whatnot Pro", 
     layout="wide", 
@@ -55,6 +291,8 @@ st.markdown("""
 col_title, col_refresh = st.columns([6, 1])
 with col_title:
     st.title("💎 MJTGC - Whatnot Tracker Pro V2")
+    # Afficher les informations de l'utilisateur connecté
+show_user_info()
 with col_refresh:
     if st.button("🔄", help="Rafraîchir les données", use_container_width=True):
         st.cache_data.clear()
