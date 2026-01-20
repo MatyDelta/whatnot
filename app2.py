@@ -62,51 +62,202 @@ def check_password():
     if "authenticated" in st.session_state and st.session_state.authenticated:
         return True
     
+    # CSS avancé pour l'écran de connexion
     st.markdown("""
     <style>
-        .login-container {
-            max-width: 450px;
-            margin: 80px auto;
+        /* Fond dégradé animé */
+        [data-testid="stAppViewContainer"] {
+            background: linear-gradient(-45deg, #667eea, #764ba2, #f093fb, #4facfe);
+            background-size: 400% 400%;
+            animation: gradientBG 15s ease infinite;
+        }
+        
+        @keyframes gradientBG {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        
+        /* Container principal */
+        .login-main-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        /* Carte de connexion */
+        .login-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 30px;
             padding: 50px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border-radius: 20px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            max-width: 480px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            animation: fadeInUp 0.6s ease-out;
         }
-        .login-box {
-            background: white;
-            padding: 40px;
-            border-radius: 15px;
+        
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
-        .login-title {
+        
+        /* Logo et titre */
+        .login-logo {
             text-align: center;
-            color: #667eea;
-            font-size: 36px;
-            font-weight: bold;
+            margin-bottom: 40px;
+        }
+        
+        .login-logo-icon {
+            font-size: 80px;
+            margin-bottom: 20px;
+            display: inline-block;
+            animation: floatAnimation 3s ease-in-out infinite;
+        }
+        
+        @keyframes floatAnimation {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+        }
+        
+        .login-title {
+            font-size: 42px;
+            font-weight: 800;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 10px;
+            letter-spacing: -1px;
+        }
+        
+        .login-subtitle {
+            color: #6b7280;
+            font-size: 18px;
+            font-weight: 500;
             margin-bottom: 10px;
         }
-        .login-subtitle {
+        
+        .login-tagline {
+            color: #9ca3af;
+            font-size: 14px;
+            font-style: italic;
+        }
+        
+        /* Inputs */
+        .stTextInput > div > div > input {
+            border-radius: 15px !important;
+            border: 2px solid #e5e7eb !important;
+            padding: 15px 20px !important;
+            font-size: 16px !important;
+            transition: all 0.3s ease !important;
+        }
+        
+        .stTextInput > div > div > input:focus {
+            border-color: #667eea !important;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1) !important;
+        }
+        
+        /* Boutons */
+        .stButton > button {
+            border-radius: 15px !important;
+            padding: 15px 30px !important;
+            font-size: 16px !important;
+            font-weight: 600 !important;
+            transition: all 0.3s ease !important;
+        }
+        
+        .stButton > button[kind="primary"] {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+            border: none !important;
+        }
+        
+        .stButton > button[kind="primary"]:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3) !important;
+        }
+        
+        /* Footer */
+        .login-footer {
             text-align: center;
-            color: #6b7280;
-            font-size: 16px;
-            margin-bottom: 30px;
+            margin-top: 40px;
+            padding-top: 30px;
+            border-top: 1px solid #e5e7eb;
+        }
+        
+        .login-footer-text {
+            color: #9ca3af;
+            font-size: 13px;
+            margin-bottom: 10px;
+        }
+        
+        .login-footer-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        /* Expander personnalisé */
+        .streamlit-expanderHeader {
+            background-color: #f9fafb !important;
+            border-radius: 10px !important;
+            font-weight: 500 !important;
         }
     </style>
     """, unsafe_allow_html=True)
     
-    st.markdown("<div class='login-container'>", unsafe_allow_html=True)
-    st.markdown("<div class='login-box'>", unsafe_allow_html=True)
-    st.markdown("<div class='login-title'>💎 MJTGC</div>", unsafe_allow_html=True)
-    st.markdown("<div class='login-subtitle'>Whatnot Tracker Pro</div>", unsafe_allow_html=True)
+    # Structure HTML
+    st.markdown("""
+    <div class="login-main-container">
+        <div class="login-card">
+            <div class="login-logo">
+                <div class="login-logo-icon">💎</div>
+                <div class="login-title">MJTGC</div>
+                <div class="login-subtitle">Whatnot Tracker Pro</div>
+                <div class="login-tagline">Gérez vos lives comme un pro</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
+    # Formulaire de connexion
     with st.form("login_form"):
-        username = st.text_input("👤 Nom d'utilisateur", placeholder="Julie, Matheo ou Admin")
-        password = st.text_input("🔑 Mot de passe", type="password", placeholder="Entrez votre mot de passe")
+        st.markdown("### 🔐 Connexion")
         
-        col1, col2 = st.columns(2)
+        username = st.text_input(
+            "Nom d'utilisateur",
+            placeholder="Julie, Matheo ou Admin",
+            label_visibility="collapsed",
+            key="username_input"
+        )
+        
+        password = st.text_input(
+            "Mot de passe",
+            type="password",
+            placeholder="••••••••",
+            label_visibility="collapsed",
+            key="password_input"
+        )
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        col1, col2 = st.columns([2, 1])
         with col1:
             submit = st.form_submit_button("🚀 Se Connecter", use_container_width=True, type="primary")
         with col2:
-            reset = st.form_submit_button("🔄 Réinitialiser", use_container_width=True)
+            reset = st.form_submit_button("🔄 Effacer", use_container_width=True)
         
         if reset:
             st.session_state.clear()
@@ -121,20 +272,37 @@ def check_password():
                 st.balloons()
                 st.rerun()
             else:
-                st.error("❌ Nom d'utilisateur ou mot de passe incorrect")
+                st.error("❌ Identifiants incorrects")
     
-    with st.expander("❓ Aide à la connexion"):
-        st.info("""
-        **Comptes disponibles par défaut:**
-        - Julie / julie2025
-        - Matheo / matheo2025
-        - Admin / admin2025
+    # Aide
+    with st.expander("💡 Besoin d'aide ?"):
+        st.markdown("""
+        **Comptes disponibles :**
         
-        ⚠️ **Sécurité:** Changez ces mots de passe dans `.streamlit/secrets.toml`
+        | Utilisateur | Mot de passe |
+        |------------|--------------|
+        | Julie | `julie2025` |
+        | Matheo | `matheo2025` |
+        | Admin | `admin2025` |
+        
+        ⚠️ **Important :** Changez ces mots de passe par défaut !
+        
+        Pour modifier les mots de passe, créez `.streamlit/secrets.toml` :
+        ```toml
+        [passwords]
+        julie = "votre_nouveau_mdp"
+        matheo = "votre_nouveau_mdp"
+        admin = "votre_nouveau_mdp"
+        ```
         """)
     
-    st.markdown("</div></div>", unsafe_allow_html=True)
-    st.markdown("<div style='text-align: center; color: #6b7280; margin-top: 30px;'><p style='font-size: 12px;'>🔐 Connexion sécurisée</p></div>", unsafe_allow_html=True)
+    # Footer
+    st.markdown("""
+    <div class="login-footer">
+        <div class="login-footer-text">Développé avec ❤️ pour MJTGC</div>
+        <div class="login-footer-badge">🔐 Connexion Sécurisée</div>
+    </div>
+    """, unsafe_allow_html=True)
     
     return False
 
@@ -432,9 +600,18 @@ with st.sidebar:
     st.divider()
     st.markdown("## ➕ Nouvelle Opération")
     
+    # Indicateur si un ticket a été scanné
+    if 'scan_price' in st.session_state and st.session_state.get('scan_price', 0) > 0:
+        st.success("✅ Ticket scanné ! Formulaire pré-rempli avec les données du ticket")
+    
     with st.form("new_operation", clear_on_submit=True):
         date_input = st.date_input("📅 Date", value=st.session_state.get('scan_date', datetime.now()), max_value=datetime.now())
-        type_input = st.selectbox("🏷️ Type d'opération", ["💰 Gain Live", "🛒 Dépense Stock Live", "💸 Frais Divers"])
+        
+        # Déterminer le type par défaut : si un ticket a été scanné, présélectionner "Dépense Stock Live"
+        type_options = ["💰 Gain Live", "🛒 Dépense Stock Live", "💸 Frais Divers"]
+        default_type_index = 1 if 'scan_price' in st.session_state and st.session_state.get('scan_price', 0) > 0 else 0
+        
+        type_input = st.selectbox("🏷️ Type d'opération", type_options, index=default_type_index)
         
         live_id_input = None
         if "Live" in type_input:
