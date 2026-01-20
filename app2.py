@@ -48,6 +48,11 @@ st.markdown("""
         border-radius: 10px;
         margin: 10px 0;
     }
+    /* Garder la sidebar ouverte */
+    [data-testid="stSidebar"][aria-expanded="true"] {
+        min-width: 350px;
+        max-width: 350px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -109,36 +114,28 @@ def load_data():
         data = conn.read(ttl="0s")
         
         if data is None or data.empty:
-            # Création d'un DataFrame vide avec la structure correcte
             return pd.DataFrame(columns=[
                 'Date', 'Type', 'Description', 'Montant_Gain', 'Montant_Depense',
                 'Live_ID', 'Montant_Rembourse_Julie', 'Statut_Remb_Julie',
                 'Date_Remb_Complete_Julie', 'Année', 'Notes'
             ])
         
-        # Nettoyage des lignes vides
         data = data.dropna(how='all')
-        
-        # Conversion des types
         data['Date'] = pd.to_datetime(data['Date'], errors='coerce')
         
         # MIGRATION AUTOMATIQUE V1 → V2
-        # Si les anciennes colonnes existent (Montant), convertir vers la nouvelle structure
         if 'Montant' in data.columns and 'Montant_Gain' not in data.columns:
             st.info("🔄 Migration automatique des données V1 → V2 en cours...")
             
-            # Convertir Montant en Montant_Gain et Montant_Depense
             data['Montant'] = pd.to_numeric(data['Montant'], errors='coerce').fillna(0)
             data['Montant_Gain'] = data['Montant'].apply(lambda x: x if x > 0 else 0)
             data['Montant_Depense'] = data['Montant'].apply(lambda x: abs(x) if x < 0 else 0)
             
-            # Renommer les anciennes colonnes de statut
             if 'Statut_Julie' in data.columns:
                 data['Statut_Remb_Julie'] = data['Statut_Julie']
             if 'Date_Remb_Julie' in data.columns:
                 data['Date_Remb_Complete_Julie'] = data['Date_Remb_Julie']
             
-            # Calculer les montants remboursés pour Julie
             def calc_remb_julie(row):
                 if row['Montant_Gain'] > 0:
                     if 'Statut_Remb_Julie' in row and row['Statut_Remb_Julie'] == 'Payé':
@@ -146,15 +143,12 @@ def load_data():
                 return 0
             
             data['Montant_Rembourse_Julie'] = data.apply(calc_remb_julie, axis=1)
-            
-            st.success("✅ Migration terminée ! Vos données ont été converties.")
+            st.success("✅ Migration terminée !")
         else:
-            # Structure V2 déjà présente
             data['Montant_Gain'] = pd.to_numeric(data['Montant_Gain'], errors='coerce').fillna(0)
             data['Montant_Depense'] = pd.to_numeric(data['Montant_Depense'], errors='coerce').fillna(0)
             data['Montant_Rembourse_Julie'] = pd.to_numeric(data['Montant_Rembourse_Julie'], errors='coerce').fillna(0)
         
-        # Ajout des colonnes manquantes
         if 'Live_ID' not in data.columns:
             data['Live_ID'] = None
         if 'Statut_Remb_Julie' not in data.columns:
@@ -168,7 +162,6 @@ def load_data():
         if 'Notes' not in data.columns:
             data['Notes'] = ''
         
-        # Conversion des dates de remboursement
         data['Date_Remb_Complete_Julie'] = pd.to_datetime(data['Date_Remb_Complete_Julie'], errors='coerce')
         
         return data
@@ -208,7 +201,6 @@ df = st.session_state.data
 
 # Si migration détectée et pas encore sauvegardée
 if not df.empty and not st.session_state.migration_done:
-    # Vérifier si c'était une migration (présence de Montant_Gain mais pas de Live_ID rempli)
     if 'Montant_Gain' in df.columns and df['Live_ID'].isna().all():
         with st.sidebar:
             st.warning("⚠️ Migration V1→V2 détectée")
@@ -230,28 +222,15 @@ def calculer_metriques(df):
             'matheo_disponible': 0
         }
     
-    # Chiffre d'affaires brut (uniquement les gains)
     ca_brut = df['Montant_Gain'].sum()
-    
-    # Total des dépenses de live
     total_depenses_live = df['Montant_Depense'].sum()
-    
-    # Bénéfice net = CA brut - dépenses
     benefice_net = ca_brut - total_depenses_live
-    
-    # Parts individuelles (50/50 sur les GAINS uniquement)
     part_julie = ca_brut / 2
     part_matheo = ca_brut / 2
-    
-    # Calcul des impôts (23% sur le CA brut)
     impots = ca_brut * 0.23
-    
-    # Remboursements Julie
     julie_recue = df['Montant_Rembourse_Julie'].sum()
     julie_restant = part_julie - julie_recue
-    
-    # Mathéo : récupère sa part uniquement après avoir remboursé Julie
-    matheo_disponible = julie_recue  # Il récupère au fur et à mesure qu'il rembourse Julie
+    matheo_disponible = julie_recue
     
     return {
         'ca_brut': ca_brut,
@@ -266,7 +245,6 @@ def calculer_metriques(df):
         'matheo_disponible': matheo_disponible
     }
 
-# --- CALCUL DES MÉTRIQUES PAR LIVE ---
 def calculer_metriques_live(df, live_id):
     """Calcule les métriques d'un live spécifique"""
     live_data = df[df['Live_ID'] == live_id]
@@ -285,7 +263,6 @@ def calculer_metriques_live(df, live_id):
         'date': live_data['Date'].max()
     }
 
-# Calcul des métriques globales
 metriques = calculer_metriques(df)
 
 # --- SIDEBAR : SAISIE ET SCAN ---
@@ -308,38 +285,49 @@ with st.sidebar:
                 st.session_state['scan_date'] = scan_date
                 st.session_state['scan_name'] = scan_name
                 st.session_state['scan_price'] = scan_price
-                st.success("✅ Analyse terminée !")
+                st.session_state['ticket_scanned'] = True
+                st.success("✅ Ticket analysé - Formulaire pré-rempli !")
                 st.balloons()
+                st.rerun()
     
     st.divider()
     st.markdown("## ➕ Nouvelle Opération")
     
-    # Formulaire de saisie
-    with st.form("new_operation", clear_on_submit=True):
+    # Indicateur si un ticket a été scanné
+    if st.session_state.get('ticket_scanned', False):
+        st.success("📸 Ticket scanné → Pré-rempli en Dépense Stock !")
+    
+    # Formulaire de saisie - NE PAS clear automatiquement
+    with st.form("new_operation", clear_on_submit=False):
         date_input = st.date_input(
             "📅 Date",
             value=st.session_state.get('scan_date', datetime.now()),
             max_value=datetime.now()
         )
         
+        # Pré-sélection automatique de "Dépense Stock Live" si ticket scanné
+        type_options = ["💰 Gain Live", "🛒 Dépense Stock Live", "💸 Frais Divers"]
+        default_type_index = 1 if st.session_state.get('ticket_scanned', False) else 0
+        
         type_input = st.selectbox(
             "🏷️ Type d'opération",
-            ["💰 Gain Live", "🛒 Dépense Stock Live", "💸 Frais Divers"]
+            type_options,
+            index=default_type_index
         )
         
-        # Si c'est un gain ou dépense de live, demander le Live ID
+        # Live ID si nécessaire
         live_id_input = None
         if "Live" in type_input:
             live_id_input = st.text_input(
                 "🎬 ID du Live",
                 placeholder="Ex: LIVE_20250119",
-                help="Identifiant unique du live (sera généré automatiquement si vide)"
+                help="Auto-généré si vide"
             )
         
         desc_input = st.text_input(
             "📝 Description",
             value=st.session_state.get('scan_name', ""),
-            placeholder="Ex: Live Pokémon, Achat cartes chez Carrefour..."
+            placeholder="Ex: Achat cartes chez Carrefour..."
         )
         
         montant_input = st.number_input(
@@ -355,19 +343,31 @@ with st.sidebar:
             placeholder="Informations supplémentaires..."
         )
         
-        submit_btn = st.form_submit_button("💾 Enregistrer", use_container_width=True, type="primary")
+        col_btn1, col_btn2 = st.columns(2)
+        
+        with col_btn1:
+            submit_btn = st.form_submit_button("💾 Enregistrer", use_container_width=True, type="primary")
+        
+        with col_btn2:
+            cancel_btn = st.form_submit_button("🔄 Annuler", use_container_width=True)
+        
+        if cancel_btn:
+            # Réinitialiser les valeurs du scan
+            for key in ['scan_date', 'scan_name', 'scan_price', 'ticket_scanned']:
+                st.session_state.pop(key, None)
+            st.rerun()
         
         if submit_btn:
             if desc_input and montant_input > 0:
-                # Génération automatique du Live ID si nécessaire
+                # Génération auto du Live ID si nécessaire
                 if "Live" in type_input and not live_id_input:
                     live_id_input = f"LIVE_{date_input.strftime('%Y%m%d_%H%M%S')}"
                 
-                # Détermination du type de montant
+                # Type de montant
                 montant_gain = montant_input if "Gain" in type_input else 0
                 montant_depense = montant_input if "Dépense" in type_input or "Frais" in type_input else 0
                 
-                # Création de la nouvelle ligne
+                # Nouvelle ligne
                 new_entry = pd.DataFrame([{
                     "Date": pd.to_datetime(date_input),
                     "Type": type_input,
@@ -386,15 +386,15 @@ with st.sidebar:
                 st.session_state.data = pd.concat([st.session_state.data, new_entry], ignore_index=True)
                 
                 if save_data(st.session_state.data):
-                    st.success("✅ Opération enregistrée avec succès !")
+                    st.success("✅ Opération enregistrée !")
                     
-                    # Reset des valeurs scannées
-                    for key in ['scan_date', 'scan_name', 'scan_price']:
+                    # Reset APRÈS enregistrement
+                    for key in ['scan_date', 'scan_name', 'scan_price', 'ticket_scanned']:
                         st.session_state.pop(key, None)
                     
                     st.rerun()
             else:
-                st.error("⚠️ Veuillez remplir tous les champs obligatoires")
+                st.error("⚠️ Remplissez tous les champs obligatoires")
 
 # --- ONGLETS PRINCIPAUX ---
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -410,7 +410,6 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 with tab1:
     st.markdown("### 📈 Performance Globale")
     
-    # Métriques principales
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -446,7 +445,6 @@ with tab1:
     
     st.divider()
     
-    # Calcul des impôts et répartition
     st.markdown("### 💰 Répartition Financière")
     col_imp, col_julie, col_matheo = st.columns(3)
     
@@ -475,7 +473,6 @@ with tab1:
     
     st.divider()
     
-    # Graphiques
     if not df.empty:
         col_g1, col_g2 = st.columns(2)
         
@@ -522,7 +519,6 @@ with tab1:
     
     st.divider()
     
-    # Dernières opérations
     st.markdown("#### 🕒 Dernières Opérations")
     if not df.empty:
         recent_ops = df.sort_values('Date', ascending=False).head(10)
@@ -555,13 +551,11 @@ with tab2:
     st.markdown("### 🎬 Historique des Lives")
     
     if not df.empty:
-        # Récupération de tous les lives uniques
         lives_ids = df[df['Live_ID'].notna()]['Live_ID'].unique()
         
         if len(lives_ids) > 0:
             st.info(f"📊 {len(lives_ids)} live(s) enregistré(s)")
             
-            # Affichage de chaque live
             for live_id in sorted(lives_ids, reverse=True):
                 metriques_live = calculer_metriques_live(df, live_id)
                 
@@ -584,7 +578,6 @@ with tab2:
                                 delta_color=delta_color
                             )
                         
-                        # Détail des opérations du live
                         st.markdown("**📋 Détails des opérations :**")
                         live_operations = df[df['Live_ID'] == live_id].sort_values('Date')
                         
@@ -602,7 +595,6 @@ with tab2:
 with tab3:
     st.markdown("### 💰 Gestion des Remboursements - Julie")
     
-    # Métriques Julie
     col1, col2, col3 = st.columns(3)
     
     with col1:
@@ -614,14 +606,12 @@ with tab3:
     with col3:
         st.metric("⏳ Reste à Recevoir", f"{metriques['julie_restant']:.2f} €")
     
-    # Barre de progression
     progression = (metriques['julie_recue'] / metriques['julie_a_recevoir'] * 100) if metriques['julie_a_recevoir'] > 0 else 0
     st.progress(progression / 100)
     st.caption(f"**{progression:.1f}%** remboursé")
     
     st.divider()
     
-    # Liste des gains à rembourser
     gains_a_rembourser = df[(df['Montant_Gain'] > 0) & (df['Statut_Remb_Julie'] != 'Payé')].copy()
     
     if not gains_a_rembourser.empty:
@@ -655,7 +645,6 @@ with tab3:
                 if pd.notna(row['Notes']) and row['Notes']:
                     st.info(f"📌 {row['Notes']}")
                 
-                # Formulaire de remboursement partiel
                 st.markdown("#### 💳 Rembourser")
                 
                 col_form1, col_form2 = st.columns([3, 1])
@@ -672,11 +661,9 @@ with tab3:
                 
                 with col_form2:
                     if st.button("💸 Rembourser", key=f"btn_remb_{idx}", use_container_width=True):
-                        # Mise à jour du montant remboursé
                         nouveau_total_remb = deja_rembourse + montant_remb
                         st.session_state.data.at[idx, 'Montant_Rembourse_Julie'] = nouveau_total_remb
                         
-                        # Si le remboursement est complet
                         if nouveau_total_remb >= part_julie:
                             st.session_state.data.at[idx, 'Statut_Remb_Julie'] = 'Payé'
                             st.session_state.data.at[idx, 'Date_Remb_Complete_Julie'] = datetime.now()
@@ -689,7 +676,6 @@ with tab3:
     
     st.divider()
     
-    # Historique des remboursements complets
     st.markdown("### 📜 Historique des Gains Remboursés")
     gains_rembourses = df[(df['Montant_Gain'] > 0) & (df['Statut_Remb_Julie'] == 'Payé')].sort_values('Date_Remb_Complete_Julie', ascending=False)
     
@@ -717,7 +703,6 @@ with tab3:
 with tab4:
     st.markdown("### 👨‍💻 Tableau de Bord Mathéo")
     
-    # Métriques Mathéo
     col1, col2, col3 = st.columns(3)
     
     with col1:
@@ -738,7 +723,6 @@ with tab4:
             help="Montant bloqué tant que Julie n'est pas remboursée"
         )
     
-    # Explication du système
     st.info("""
     💡 **Comment ça marche ?**
     
@@ -750,7 +734,6 @@ with tab4:
     
     st.divider()
     
-    # Graphique de l'évolution de l'argent disponible
     if not df.empty:
         st.markdown("### 📈 Évolution de Votre Argent Disponible")
         
@@ -778,7 +761,6 @@ with tab4:
     
     st.divider()
     
-    # Détail des gains disponibles
     st.markdown("### 💰 Détail de Votre Argent Disponible")
     
     gains_disponibles = df[(df['Montant_Gain'] > 0) & (df['Statut_Remb_Julie'] == 'Payé')].sort_values('Date_Remb_Complete_Julie', ascending=False)
@@ -809,7 +791,6 @@ with tab4:
 with tab5:
     st.markdown("### 🎯 Objectifs de Chiffre d'Affaires")
     
-    # Définition des paliers
     paliers = [
         {"nom": "🥉 Bronze", "montant": 1000, "color": "#cd7f32"},
         {"nom": "🥈 Argent", "montant": 2500, "color": "#c0c0c0"},
@@ -821,7 +802,6 @@ with tab5:
     
     ca_actuel = metriques['ca_brut']
     
-    # Trouvercle palier actuel et le suivant
     palier_actuel = None
     palier_suivant = None
     
@@ -832,7 +812,6 @@ with tab5:
             palier_suivant = palier
             break
     
-    # Affichage du statut
     col_stat1, col_stat2 = st.columns(2)
     
     with col_stat1:
@@ -846,7 +825,7 @@ with tab5:
             </div>
             """, unsafe_allow_html=True)
         else:
-            st.markdown("""
+            st.markdown(f"""
             <div style='background: linear-gradient(135deg, #6b7280, #4b5563); 
                         padding: 30px; border-radius: 15px; text-align: center; color: white;'>
                 <h2 style='margin: 0;'>🚀 Débutant</h2>
@@ -884,7 +863,6 @@ with tab5:
     
     st.divider()
     
-    # Tous les paliers
     st.markdown("### 📊 Tous les Paliers")
     
     for palier in paliers:
@@ -912,7 +890,6 @@ with tab5:
 with tab6:
     st.markdown("### 📋 Gestion des Données")
     
-    # Mode suppression
     col_del1, col_del2 = st.columns([3, 1])
     
     with col_del1:
@@ -928,10 +905,8 @@ with tab6:
             st.session_state.rows_to_delete = []
             st.rerun()
     
-    # Affichage du DataFrame
     if not df.empty:
         if st.session_state.delete_mode:
-            # Sélection des lignes à supprimer
             selected_rows = st.multiselect(
                 "Sélectionnez les opérations à supprimer",
                 options=df.index.tolist(),
@@ -947,7 +922,6 @@ with tab6:
                         st.session_state.delete_mode = False
                         st.rerun()
         
-        # Affichage complet
         st.dataframe(
             df,
             column_config={
@@ -961,7 +935,6 @@ with tab6:
             hide_index=True
         )
         
-        # Export CSV
         csv = df.to_csv(index=False).encode('utf-8')
         st.download_button(
             "📥 Télécharger les données (CSV)",
