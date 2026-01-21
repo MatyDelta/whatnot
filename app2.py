@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
+from io import BytesIO
 try:
     from streamlit_gsheets import GSheetsConnection
 except ImportError:
@@ -53,6 +54,15 @@ st.markdown("""
         min-width: 350px;
         max-width: 350px;
     }
+    /* Stats box */
+    .stats-box {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 15px;
+        border-radius: 10px;
+        color: white;
+        text-align: center;
+        margin: 10px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -78,14 +88,12 @@ def extract_ticket_data(image):
     try:
         text = pytesseract.image_to_string(image, lang='fra')
         
-        # Extraction du prix (dernier montant trouvé = souvent le total)
         prices = re.findall(r"(\d+[,\.]\d{2})", text)
         price = float(prices[-1].replace(',', '.')) if prices else 0.0
         
-        # Extraction de la date
         date_patterns = [
-            r"(\d{2}[/\-\.]\d{2}[/\-\.]\d{4})",  # JJ/MM/AAAA
-            r"(\d{2}[/\-\.]\d{2}[/\-\.]\d{2})"    # JJ/MM/AA
+            r"(\d{2}[/\-\.]\d{2}[/\-\.]\d{4})",
+            r"(\d{2}[/\-\.]\d{2}[/\-\.]\d{2})"
         ]
         date_found = datetime.now()
         for pattern in date_patterns:
@@ -97,7 +105,6 @@ def extract_ticket_data(image):
                 except:
                     continue
         
-        # Extraction du nom du magasin (première ligne non vide)
         lines = [l.strip() for l in text.split('\n') if l.strip() and len(l.strip()) > 3]
         store_name = lines[0][:40] if lines else "Ticket scanné"
         
@@ -123,7 +130,6 @@ def load_data():
         data = data.dropna(how='all')
         data['Date'] = pd.to_datetime(data['Date'], errors='coerce')
         
-        # MIGRATION AUTOMATIQUE V1 → V2
         if 'Montant' in data.columns and 'Montant_Gain' not in data.columns:
             st.info("🔄 Migration automatique des données V1 → V2 en cours...")
             
@@ -199,7 +205,7 @@ if 'migration_done' not in st.session_state:
 
 df = st.session_state.data
 
-# Si migration détectée et pas encore sauvegardée
+# Si migration détectée
 if not df.empty and not st.session_state.migration_done:
     if 'Montant_Gain' in df.columns and df['Live_ID'].isna().all():
         with st.sidebar:
@@ -233,15 +239,9 @@ def calculer_metriques(df):
     matheo_disponible = julie_recue
     
     return {
-        'ca_brut': ca_brut,
-        'total_depenses_live': total_depenses_live,
-        'benefice_net': benefice_net,
-        'part_julie': part_julie,
-        'part_matheo': part_matheo,
-        'impots': impots,
-        'julie_a_recevoir': part_julie,
-        'julie_recue': julie_recue,
-        'julie_restant': julie_restant,
+        'ca_brut': ca_brut, 'total_depenses_live': total_depenses_live, 'benefice_net': benefice_net,
+        'part_julie': part_julie, 'part_matheo': part_matheo, 'impots': impots,
+        'julie_a_recevoir': part_julie, 'julie_recue': julie_recue, 'julie_restant': julie_restant,
         'matheo_disponible': matheo_disponible
     }
 
@@ -257,23 +257,47 @@ def calculer_metriques_live(df, live_id):
     benefice = gain_brut - depense_stock
     
     return {
-        'gain_brut': gain_brut,
-        'depense_stock': depense_stock,
-        'benefice': benefice,
-        'date': live_data['Date'].max()
+        'gain_brut': gain_brut, 'depense_stock': depense_stock,
+        'benefice': benefice, 'date': live_data['Date'].max()
     }
 
 metriques = calculer_metriques(df)
 
-# --- SIDEBAR : SAISIE ET SCAN ---
+# --- SIDEBAR : FILTRES ET SAISIE ---
 with st.sidebar:
+    # FILTRES
+    st.markdown("## 🔍 Filtres")
+    
+    # Filtre période
+    periode_options = ["Tout", "Ce mois", "Ce trimestre", "Cette année", "Personnalisé"]
+    periode = st.selectbox("📅 Période", periode_options, key="filtre_periode")
+    
+    # Filtre Live
+    if not df.empty and df['Live_ID'].notna().any():
+        lives_list = ["Tous"] + sorted(df[df['Live_ID'].notna()]['Live_ID'].unique().tolist(), reverse=True)
+        live_filtre = st.selectbox("🎬 Live", lives_list, key="filtre_live")
+    else:
+        live_filtre = "Tous"
+    
+    # Application des filtres
+    df_filtered = df.copy()
+    
+    if periode == "Ce mois":
+        df_filtered = df_filtered[df_filtered['Date'].dt.to_period('M') == pd.Period.now('M')]
+    elif periode == "Ce trimestre":
+        df_filtered = df_filtered[df_filtered['Date'].dt.to_period('Q') == pd.Period.now('Q')]
+    elif periode == "Cette année":
+        df_filtered = df_filtered[df_filtered['Date'].dt.year == datetime.now().year]
+    
+    if live_filtre != "Tous":
+        df_filtered = df_filtered[df_filtered['Live_ID'] == live_filtre]
+    
+    st.divider()
+    
+    # SCANNER
     st.markdown("## 📸 Scanner un Ticket")
     
-    uploaded_file = st.file_uploader(
-        "Prendre une photo du ticket", 
-        type=['jpg', 'jpeg', 'png'],
-        help="Prenez une photo claire du ticket"
-    )
+    uploaded_file = st.file_uploader("Prendre une photo du ticket", type=['jpg', 'jpeg', 'png'], help="Photo claire du ticket")
     
     if uploaded_file:
         img = Image.open(uploaded_file)
@@ -286,62 +310,33 @@ with st.sidebar:
                 st.session_state['scan_name'] = scan_name
                 st.session_state['scan_price'] = scan_price
                 st.session_state['ticket_scanned'] = True
-                st.success("✅ Ticket analysé - Formulaire pré-rempli !")
+                st.success("✅ Ticket analysé !")
                 st.balloons()
                 st.rerun()
     
     st.divider()
+    
+    # FORMULAIRE
     st.markdown("## ➕ Nouvelle Opération")
     
-    # Indicateur si un ticket a été scanné
     if st.session_state.get('ticket_scanned', False):
-        st.success("📸 Ticket scanné → Pré-rempli en Dépense Stock !")
+        st.success("📸 Ticket scanné → Pré-rempli !")
     
-    # Formulaire de saisie - NE PAS clear automatiquement
     with st.form("new_operation", clear_on_submit=False):
-        date_input = st.date_input(
-            "📅 Date",
-            value=st.session_state.get('scan_date', datetime.now()),
-            max_value=datetime.now()
-        )
+        date_input = st.date_input("📅 Date", value=st.session_state.get('scan_date', datetime.now()), max_value=datetime.now())
         
-        # Pré-sélection automatique de "Dépense Stock Live" si ticket scanné
         type_options = ["💰 Gain Live", "🛒 Dépense Stock Live", "💸 Frais Divers"]
         default_type_index = 1 if st.session_state.get('ticket_scanned', False) else 0
         
-        type_input = st.selectbox(
-            "🏷️ Type d'opération",
-            type_options,
-            index=default_type_index
-        )
+        type_input = st.selectbox("🏷️ Type", type_options, index=default_type_index)
         
-        # Live ID si nécessaire
         live_id_input = None
         if "Live" in type_input:
-            live_id_input = st.text_input(
-                "🎬 ID du Live",
-                placeholder="Ex: LIVE_20250119",
-                help="Auto-généré si vide"
-            )
+            live_id_input = st.text_input("🎬 ID du Live", placeholder="Ex: LIVE_20250119", help="Auto-généré si vide")
         
-        desc_input = st.text_input(
-            "📝 Description",
-            value=st.session_state.get('scan_name', ""),
-            placeholder="Ex: Achat cartes chez Carrefour..."
-        )
-        
-        montant_input = st.number_input(
-            "💵 Montant (€)",
-            min_value=0.0,
-            step=0.01,
-            value=float(st.session_state.get('scan_price', 0.0)),
-            format="%.2f"
-        )
-        
-        notes_input = st.text_area(
-            "📌 Notes (optionnel)",
-            placeholder="Informations supplémentaires..."
-        )
+        desc_input = st.text_input("📝 Description", value=st.session_state.get('scan_name', ""), placeholder="Ex: Achat cartes...")
+        montant_input = st.number_input("💵 Montant (€)", min_value=0.0, step=0.01, value=float(st.session_state.get('scan_price', 0.0)), format="%.2f")
+        notes_input = st.text_area("📌 Notes", placeholder="Infos supplémentaires...")
         
         col_btn1, col_btn2 = st.columns(2)
         
@@ -352,176 +347,221 @@ with st.sidebar:
             cancel_btn = st.form_submit_button("🔄 Annuler", use_container_width=True)
         
         if cancel_btn:
-            # Réinitialiser les valeurs du scan
             for key in ['scan_date', 'scan_name', 'scan_price', 'ticket_scanned']:
                 st.session_state.pop(key, None)
             st.rerun()
         
         if submit_btn:
             if desc_input and montant_input > 0:
-                # Génération auto du Live ID si nécessaire
+                # Validation montant élevé
+                if montant_input > 1000:
+                    st.warning("⚠️ Montant élevé (> 1000€) - Vérifiez bien !")
+                
+                # Détection doublons
+                duplicates = df[
+                    (df['Date'] == pd.to_datetime(date_input)) &
+                    (df['Description'] == desc_input) &
+                    ((df['Montant_Gain'] == montant_input) | (df['Montant_Depense'] == montant_input))
+                ]
+                if not duplicates.empty:
+                    st.warning("⚠️ Opération similaire déjà existante !")
+                
                 if "Live" in type_input and not live_id_input:
                     live_id_input = f"LIVE_{date_input.strftime('%Y%m%d_%H%M%S')}"
                 
-                # Type de montant
                 montant_gain = montant_input if "Gain" in type_input else 0
                 montant_depense = montant_input if "Dépense" in type_input or "Frais" in type_input else 0
                 
-                # Nouvelle ligne
                 new_entry = pd.DataFrame([{
-                    "Date": pd.to_datetime(date_input),
-                    "Type": type_input,
-                    "Description": desc_input,
-                    "Montant_Gain": montant_gain,
-                    "Montant_Depense": montant_depense,
-                    "Live_ID": live_id_input,
-                    "Montant_Rembourse_Julie": 0,
-                    "Statut_Remb_Julie": "En attente" if montant_gain > 0 else "N/A",
-                    "Date_Remb_Complete_Julie": None,
-                    "Année": str(date_input.year),
-                    "Notes": notes_input
+                    "Date": pd.to_datetime(date_input), "Type": type_input, "Description": desc_input,
+                    "Montant_Gain": montant_gain, "Montant_Depense": montant_depense, "Live_ID": live_id_input,
+                    "Montant_Rembourse_Julie": 0, "Statut_Remb_Julie": "En attente" if montant_gain > 0 else "N/A",
+                    "Date_Remb_Complete_Julie": None, "Année": str(date_input.year), "Notes": notes_input
                 }])
                 
-                # Ajout et sauvegarde
                 st.session_state.data = pd.concat([st.session_state.data, new_entry], ignore_index=True)
                 
                 if save_data(st.session_state.data):
-                    st.success("✅ Opération enregistrée !")
-                    
-                    # Reset APRÈS enregistrement
+                    st.success("✅ Enregistré !")
                     for key in ['scan_date', 'scan_name', 'scan_price', 'ticket_scanned']:
                         st.session_state.pop(key, None)
-                    
                     st.rerun()
             else:
-                st.error("⚠️ Remplissez tous les champs obligatoires")
+                st.error("⚠️ Remplissez tous les champs")
 
-# --- ONGLETS PRINCIPAUX ---
+# Recalculer métriques avec filtres
+metriques_filtered = calculer_metriques(df_filtered)
+
+# --- ONGLETS ---
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "📊 Dashboard", 
-    "🎬 Historique Lives",
-    "💰 Remboursements Julie", 
-    "👨‍💻 Mathéo", 
-    "🎯 Objectifs",
-    "📋 Données"
+    "📊 Dashboard", "🎬 Historique Lives", "💰 Remboursements Julie", 
+    "👨‍💻 Mathéo", "🎯 Objectifs", "📋 Données"
 ])
 
-# ========== TAB 1 : DASHBOARD ==========
+# ========== TAB 1 : DASHBOARD AMÉLIORÉ ==========
 with tab1:
     st.markdown("### 📈 Performance Globale")
     
+    # Métriques principales
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric(
-            "💵 CA Brut (sans dépenses)",
-            f"{metriques['ca_brut']:.2f} €",
-            help="Chiffre d'affaires total sans déduire les dépenses"
-        )
+        st.metric("💵 CA Brut", f"{metriques_filtered['ca_brut']:.2f} €", help="CA total sans dépenses")
     
     with col2:
-        st.metric(
-            "🛒 Dépenses Lives",
-            f"{metriques['total_depenses_live']:.2f} €",
-            delta=f"-{(metriques['total_depenses_live']/metriques['ca_brut']*100):.0f}%" if metriques['ca_brut'] > 0 else None,
-            delta_color="inverse"
-        )
+        st.metric("🛒 Dépenses", f"{metriques_filtered['total_depenses_live']:.2f} €",
+                  delta=f"-{(metriques_filtered['total_depenses_live']/metriques_filtered['ca_brut']*100):.0f}%" if metriques_filtered['ca_brut'] > 0 else None,
+                  delta_color="inverse")
     
     with col3:
-        st.metric(
-            "💎 Bénéfice Net",
-            f"{metriques['benefice_net']:.2f} €",
-            delta="Positif ✅" if metriques['benefice_net'] > 0 else "Négatif ❌",
-            delta_color="normal" if metriques['benefice_net'] > 0 else "inverse"
-        )
+        st.metric("💎 Bénéfice Net", f"{metriques_filtered['benefice_net']:.2f} €",
+                  delta="Positif ✅" if metriques_filtered['benefice_net'] > 0 else "Négatif ❌",
+                  delta_color="normal" if metriques_filtered['benefice_net'] > 0 else "inverse")
     
     with col4:
-        marge = (metriques['benefice_net'] / metriques['ca_brut'] * 100) if metriques['ca_brut'] > 0 else 0
-        st.metric(
-            "📊 Marge Nette",
-            f"{marge:.1f}%",
-            delta="Excellent" if marge > 30 else "Correct" if marge > 15 else "Faible"
-        )
+        marge = (metriques_filtered['benefice_net'] / metriques_filtered['ca_brut'] * 100) if metriques_filtered['ca_brut'] > 0 else 0
+        st.metric("📊 Marge", f"{marge:.1f}%", delta="Excellent" if marge > 30 else "Correct" if marge > 15 else "Faible")
     
     st.divider()
     
+    # Statistiques avancées
+    st.markdown("### 📊 Statistiques Clés")
+    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+    
+    with col_s1:
+        nb_operations_gain = len(df_filtered[df_filtered['Montant_Gain'] > 0])
+        ticket_moyen = metriques_filtered['ca_brut'] / nb_operations_gain if nb_operations_gain > 0 else 0
+        st.metric("🎫 Ticket Moyen", f"{ticket_moyen:.2f} €")
+    
+    with col_s2:
+        nb_lives = df_filtered['Live_ID'].nunique() if 'Live_ID' in df_filtered.columns and df_filtered['Live_ID'].notna().any() else 0
+        st.metric("🎬 Nb Lives", nb_lives)
+    
+    with col_s3:
+        ca_par_live = metriques_filtered['ca_brut'] / nb_lives if nb_lives > 0 else 0
+        st.metric("💰 CA Moyen/Live", f"{ca_par_live:.2f} €")
+    
+    with col_s4:
+        nb_depenses = len(df_filtered[df_filtered['Montant_Depense'] > 0])
+        depense_moyenne = metriques_filtered['total_depenses_live'] / nb_depenses if nb_depenses > 0 else 0
+        st.metric("🛒 Dépense Moy.", f"{depense_moyenne:.2f} €")
+    
+    st.divider()
+    
+    # Alertes intelligentes
+    alerts = []
+    if metriques['julie_restant'] > 1000:
+        alerts.append(("warning", f"⚠️ Plus de {metriques['julie_restant']:.2f} € à rembourser à Julie"))
+    if marge < 20:
+        alerts.append(("error", "🔴 Attention : Marge faible (< 20%)"))
+    if metriques_filtered['ca_brut'] > 0:
+        paliers = [
+            {"nom": "🥉 Bronze", "montant": 1000}, {"nom": "🥈 Argent", "montant": 2500},
+            {"nom": "🥇 Or", "montant": 5000}, {"nom": "💎 Platine", "montant": 10000},
+            {"nom": "👑 Diamant", "montant": 25000}, {"nom": "🔥 Légende", "montant": 50000}
+        ]
+        for palier in paliers:
+            if metriques['ca_brut'] < palier['montant']:
+                reste = palier['montant'] - metriques['ca_brut']
+                if reste < 500:
+                    alerts.append(("info", f"🎯 Plus que {reste:.2f} € pour {palier['nom']} !"))
+                break
+    
+    for alert_type, message in alerts:
+        if alert_type == "warning":
+            st.warning(message)
+        elif alert_type == "error":
+            st.error(message)
+        else:
+            st.info(message)
+    
+    st.divider()
+    
+    # Répartition financière
     st.markdown("### 💰 Répartition Financière")
     col_imp, col_julie, col_matheo = st.columns(3)
     
     with col_imp:
-        st.metric(
-            "🏦 Impôts (23% du CA brut)",
-            f"{metriques['impots']:.2f} €",
-            help="23% du chiffre d'affaires brut"
-        )
+        st.metric("🏦 Impôts (23%)", f"{metriques_filtered['impots']:.2f} €")
     
     with col_julie:
         progression_julie = (metriques['julie_recue'] / metriques['part_julie'] * 100) if metriques['part_julie'] > 0 else 0
-        st.metric(
-            "👩 Part Julie (50% des gains)",
-            f"{metriques['part_julie']:.2f} €",
-            delta=f"{progression_julie:.0f}% remboursé"
-        )
+        st.metric("👩 Part Julie", f"{metriques_filtered['part_julie']:.2f} €", delta=f"{progression_julie:.0f}% remboursé")
     
     with col_matheo:
-        st.metric(
-            "👨 Part Mathéo (50% des gains)",
-            f"{metriques['part_matheo']:.2f} €",
-            delta=f"{metriques['matheo_disponible']:.2f} € disponible",
-            help="Vous récupérez votre part au fur et à mesure que vous remboursez Julie"
-        )
+        st.metric("👨 Part Mathéo", f"{metriques_filtered['part_matheo']:.2f} €",
+                  delta=f"{metriques['matheo_disponible']:.2f} € disponible")
     
     st.divider()
     
+    # Comparaison mensuelle
     if not df.empty:
+        st.markdown("### 📊 Comparaison Mensuelle")
+        
+        now = pd.Period.now('M')
+        mois_actuel = df[df['Date'].dt.to_period('M') == now]
+        mois_precedent = df[df['Date'].dt.to_period('M') == (now - 1)]
+        
+        col_c1, col_c2, col_c3 = st.columns(3)
+        
+        with col_c1:
+            ca_actuel = mois_actuel['Montant_Gain'].sum()
+            st.metric("Ce mois", f"{ca_actuel:.2f} €")
+        
+        with col_c2:
+            ca_precedent = mois_precedent['Montant_Gain'].sum()
+            evolution = ((ca_actuel - ca_precedent) / ca_precedent * 100) if ca_precedent > 0 else 0
+            st.metric("Mois précédent", f"{ca_precedent:.2f} €", f"{evolution:+.1f}%")
+        
+        with col_c3:
+            # Projection 3 mois
+            if df['Date'].dt.to_period('M').nunique() > 0:
+                ca_moyen_mensuel = df['Montant_Gain'].sum() / df['Date'].dt.to_period('M').nunique()
+                projection_3_mois = ca_moyen_mensuel * 3
+                st.metric("🔮 Projection 3 mois", f"{projection_3_mois:.2f} €")
+        
+        st.divider()
+    
+    # Graphiques
+    if not df_filtered.empty:
         col_g1, col_g2 = st.columns(2)
         
         with col_g1:
-            st.markdown("#### 📅 Évolution Mensuelle du CA Brut")
-            df_gains = df[df['Montant_Gain'] > 0].copy()
-            df_gains['Mois'] = df_gains['Date'].dt.to_period('M').astype(str)
-            monthly_ca = df_gains.groupby('Mois')['Montant_Gain'].sum().reset_index()
-            
-            fig_ca = px.area(
-                monthly_ca, 
-                x='Mois', 
-                y='Montant_Gain',
-                title="",
-                labels={'Montant_Gain': 'CA (€)', 'Mois': ''}
-            )
-            fig_ca.update_traces(line_color='#10b981', fillcolor='rgba(16, 185, 129, 0.3)')
-            fig_ca.update_layout(hovermode='x unified')
-            st.plotly_chart(fig_ca, use_container_width=True)
+            st.markdown("#### 📅 Évolution CA Brut")
+            df_gains = df_filtered[df_filtered['Montant_Gain'] > 0].copy()
+            if not df_gains.empty:
+                df_gains['Mois'] = df_gains['Date'].dt.to_period('M').astype(str)
+                monthly_ca = df_gains.groupby('Mois')['Montant_Gain'].sum().reset_index()
+                
+                fig_ca = px.area(monthly_ca, x='Mois', y='Montant_Gain', title="", labels={'Montant_Gain': 'CA (€)', 'Mois': ''})
+                fig_ca.update_traces(line_color='#10b981', fillcolor='rgba(16, 185, 129, 0.3)')
+                st.plotly_chart(fig_ca, use_container_width=True)
         
         with col_g2:
             st.markdown("#### 💰 Gains vs Dépenses")
             totaux = pd.DataFrame({
-                'Catégorie': ['Gains', 'Dépenses', 'Bénéfice Net'],
-                'Montant': [
-                    metriques['ca_brut'],
-                    metriques['total_depenses_live'],
-                    metriques['benefice_net']
-                ]
+                'Catégorie': ['Gains', 'Dépenses', 'Bénéfice'],
+                'Montant': [metriques_filtered['ca_brut'], metriques_filtered['total_depenses_live'], metriques_filtered['benefice_net']]
             })
             
-            fig_bar = px.bar(
-                totaux,
-                x='Catégorie',
-                y='Montant',
-                color='Catégorie',
-                color_discrete_map={
-                    'Gains': '#10b981',
-                    'Dépenses': '#ef4444',
-                    'Bénéfice Net': '#3b82f6'
-                }
-            )
+            fig_bar = px.bar(totaux, x='Catégorie', y='Montant', color='Catégorie',
+                            color_discrete_map={'Gains': '#10b981', 'Dépenses': '#ef4444', 'Bénéfice': '#3b82f6'})
             st.plotly_chart(fig_bar, use_container_width=True)
+        
+        # Top 5 dépenses
+        st.markdown("#### 🏆 Top 5 Dépenses")
+        top_depenses = df_filtered[df_filtered['Montant_Depense'] > 0].nlargest(5, 'Montant_Depense')
+        if not top_depenses.empty:
+            fig_top = px.bar(top_depenses, x='Description', y='Montant_Depense',
+                            color='Montant_Depense', color_continuous_scale='Reds')
+            st.plotly_chart(fig_top, use_container_width=True)
     
     st.divider()
     
+    # Dernières opérations
     st.markdown("#### 🕒 Dernières Opérations")
-    if not df.empty:
-        recent_ops = df.sort_values('Date', ascending=False).head(10)
+    if not df_filtered.empty:
+        recent_ops = df_filtered.sort_values('Date', ascending=False).head(10)
         
         for idx, row in recent_ops.iterrows():
             with st.container():
@@ -544,7 +584,7 @@ with tab1:
                     if row['Montant_Depense'] > 0:
                         st.markdown(f"<span class='metric-negative'>-{row['Montant_Depense']:.2f} €</span>", unsafe_allow_html=True)
     else:
-        st.info("Aucune opération enregistrée pour le moment")
+        st.info("Aucune opération")
 
 # ========== TAB 2 : HISTORIQUE LIVES ==========
 with tab2:
@@ -571,14 +611,10 @@ with tab2:
                         
                         with col_l3:
                             delta_color = "normal" if metriques_live['benefice'] > 0 else "inverse"
-                            st.metric(
-                                "💎 Bénéfice", 
-                                f"{metriques_live['benefice']:.2f} €",
-                                delta="Positif" if metriques_live['benefice'] > 0 else "Négatif",
-                                delta_color=delta_color
-                            )
+                            st.metric("💎 Bénéfice", f"{metriques_live['benefice']:.2f} €",
+                                     delta="Positif" if metriques_live['benefice'] > 0 else "Négatif", delta_color=delta_color)
                         
-                        st.markdown("**📋 Détails des opérations :**")
+                        st.markdown("**📋 Détails :**")
                         live_operations = df[df['Live_ID'] == live_id].sort_values('Date')
                         
                         for _, op in live_operations.iterrows():
@@ -587,9 +623,9 @@ with tab2:
                             elif op['Montant_Depense'] > 0:
                                 st.error(f"❌ -{op['Montant_Depense']:.2f} € - {op['Description']}")
         else:
-            st.info("Aucun live enregistré pour le moment")
+            st.info("Aucun live enregistré")
     else:
-        st.info("Aucune donnée disponible")
+        st.info("Aucune donnée")
 
 # ========== TAB 3 : REMBOURSEMENTS JULIE ==========
 with tab3:
@@ -604,7 +640,7 @@ with tab3:
         st.metric("✅ Déjà Reçu", f"{metriques['julie_recue']:.2f} €")
     
     with col3:
-        st.metric("⏳ Reste à Recevoir", f"{metriques['julie_restant']:.2f} €")
+        st.metric("⏳ Reste", f"{metriques['julie_restant']:.2f} €")
     
     progression = (metriques['julie_recue'] / metriques['julie_a_recevoir'] * 100) if metriques['julie_a_recevoir'] > 0 else 0
     st.progress(progression / 100)
@@ -623,10 +659,7 @@ with tab3:
             reste_a_rembourser = part_julie - deja_rembourse
             progression_gain = (deja_rembourse / part_julie * 100) if part_julie > 0 else 0
             
-            with st.expander(
-                f"💰 {part_julie:.2f} € - {row['Description']} (Reste: {reste_a_rembourser:.2f} €)",
-                expanded=False
-            ):
+            with st.expander(f"💰 {part_julie:.2f} € - {row['Description']} (Reste: {reste_a_rembourser:.2f} €)", expanded=False):
                 col_info1, col_info2 = st.columns(2)
                 
                 with col_info1:
@@ -637,7 +670,7 @@ with tab3:
                         st.write(f"🎬 **Live:** {row['Live_ID']}")
                 
                 with col_info2:
-                    st.write(f"👤 **Part Julie (50%):** {part_julie:.2f} €")
+                    st.write(f"👤 **Part Julie:** {part_julie:.2f} €")
                     st.write(f"✅ **Déjà remboursé:** {deja_rembourse:.2f} €")
                     st.write(f"⏳ **Reste:** {reste_a_rembourser:.2f} €")
                     st.progress(progression_gain / 100)
@@ -650,14 +683,8 @@ with tab3:
                 col_form1, col_form2 = st.columns([3, 1])
                 
                 with col_form1:
-                    montant_remb = st.number_input(
-                        "Montant à rembourser (€)",
-                        min_value=0.01,
-                        max_value=float(reste_a_rembourser),
-                        value=float(reste_a_rembourser),
-                        step=0.01,
-                        key=f"remb_{idx}"
-                    )
+                    montant_remb = st.number_input("Montant (€)", min_value=0.01, max_value=float(reste_a_rembourser),
+                                                   value=float(reste_a_rembourser), step=0.01, key=f"remb_{idx}")
                 
                 with col_form2:
                     if st.button("💸 Rembourser", key=f"btn_remb_{idx}", use_container_width=True):
@@ -669,14 +696,14 @@ with tab3:
                             st.session_state.data.at[idx, 'Date_Remb_Complete_Julie'] = datetime.now()
                         
                         if save_data(st.session_state.data):
-                            st.success(f"✅ {montant_remb:.2f} € remboursé à Julie !")
+                            st.success(f"✅ {montant_remb:.2f} € remboursé !")
                             st.rerun()
     else:
-        st.success("🎉 Tous les gains ont été remboursés à Julie !")
+        st.success("🎉 Tous les gains remboursés !")
     
     st.divider()
     
-    st.markdown("### 📜 Historique des Gains Remboursés")
+    st.markdown("### 📜 Historique Remboursements")
     gains_rembourses = df[(df['Montant_Gain'] > 0) & (df['Statut_Remb_Julie'] == 'Payé')].sort_values('Date_Remb_Complete_Julie', ascending=False)
     
     if not gains_rembourses.empty:
@@ -697,7 +724,7 @@ with tab3:
                 if pd.notna(row['Date_Remb_Complete_Julie']):
                     st.success(f"✅ {row['Date_Remb_Complete_Julie'].strftime('%d/%m/%Y')}")
     else:
-        st.info("Aucun remboursement complet pour le moment")
+        st.info("Aucun remboursement complet")
 
 # ========== TAB 4 : MATHÉO ==========
 with tab4:
@@ -706,36 +733,22 @@ with tab4:
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.metric("💎 Part Totale (50%)", f"{metriques['part_matheo']:.2f} €")
+        st.metric("💎 Part Totale", f"{metriques['part_matheo']:.2f} €")
     
     with col2:
-        st.metric(
-            "💰 Disponible", 
-            f"{metriques['matheo_disponible']:.2f} €",
-            help="Montant que vous pouvez récupérer (= ce que vous avez déjà remboursé à Julie)"
-        )
+        st.metric("💰 Disponible", f"{metriques['matheo_disponible']:.2f} €",
+                  help="= ce que vous avez remboursé à Julie")
     
     with col3:
-        reste_a_rembourser_julie = metriques['julie_restant']
-        st.metric(
-            "🔒 Bloqué", 
-            f"{reste_a_rembourser_julie:.2f} €",
-            help="Montant bloqué tant que Julie n'est pas remboursée"
-        )
+        st.metric("🔒 Bloqué", f"{metriques['julie_restant']:.2f} €",
+                  help="Tant que Julie n'est pas remboursée")
     
-    st.info("""
-    💡 **Comment ça marche ?**
-    
-    Vous récupérez votre part (50%) **au fur et à mesure** que vous remboursez Julie.
-    
-    - Chaque euro remboursé à Julie = un euro disponible pour vous
-    - Une fois Julie 100% remboursée, vous récupérez l'intégralité de votre part
-    """)
+    st.info("""💡 **Fonctionnement :** Vous récupérez votre part au fur et à mesure que vous remboursez Julie.""")
     
     st.divider()
     
     if not df.empty:
-        st.markdown("### 📈 Évolution de Votre Argent Disponible")
+        st.markdown("### 📈 Évolution Argent Disponible")
         
         gains_payes = df[(df['Montant_Gain'] > 0) & (df['Statut_Remb_Julie'] == 'Payé')].copy()
         
@@ -743,25 +756,16 @@ with tab4:
             gains_payes = gains_payes.sort_values('Date_Remb_Complete_Julie')
             gains_payes['Part_Matheo_Cumulative'] = (gains_payes['Montant_Gain'] / 2).cumsum()
             
-            fig_matheo = px.line(
-                gains_payes,
-                x='Date_Remb_Complete_Julie',
-                y='Part_Matheo_Cumulative',
-                title="",
-                labels={
-                    'Date_Remb_Complete_Julie': 'Date',
-                    'Part_Matheo_Cumulative': 'Argent Disponible (€)'
-                }
-            )
+            fig_matheo = px.line(gains_payes, x='Date_Remb_Complete_Julie', y='Part_Matheo_Cumulative',
+                                title="", labels={'Date_Remb_Complete_Julie': 'Date', 'Part_Matheo_Cumulative': 'Disponible (€)'})
             fig_matheo.update_traces(line_color='#3b82f6', line_width=3)
-            fig_matheo.update_layout(hovermode='x unified')
             st.plotly_chart(fig_matheo, use_container_width=True)
         else:
-            st.info("Pas encore de remboursements complets")
+            st.info("Pas encore de remboursements")
     
     st.divider()
     
-    st.markdown("### 💰 Détail de Votre Argent Disponible")
+    st.markdown("### 💰 Détail Argent Disponible")
     
     gains_disponibles = df[(df['Montant_Gain'] > 0) & (df['Statut_Remb_Julie'] == 'Payé')].sort_values('Date_Remb_Complete_Julie', ascending=False)
     
@@ -785,11 +789,11 @@ with tab4:
             with col_d4:
                 st.success("✅ Disponible")
     else:
-        st.info("Remboursez Julie pour débloquer votre argent !")
+        st.info("Remboursez Julie pour débloquer !")
 
 # ========== TAB 5 : OBJECTIFS ==========
 with tab5:
-    st.markdown("### 🎯 Objectifs de Chiffre d'Affaires")
+    st.markdown("### 🎯 Objectifs CA")
     
     paliers = [
         {"nom": "🥉 Bronze", "montant": 1000, "color": "#cd7f32"},
@@ -805,7 +809,7 @@ with tab5:
     palier_actuel = None
     palier_suivant = None
     
-    for i, palier in enumerate(paliers):
+    for palier in paliers:
         if ca_actuel >= palier['montant']:
             palier_actuel = palier
         elif palier_suivant is None and ca_actuel < palier['montant']:
@@ -829,7 +833,7 @@ with tab5:
             <div style='background: linear-gradient(135deg, #6b7280, #4b5563); 
                         padding: 30px; border-radius: 15px; text-align: center; color: white;'>
                 <h2 style='margin: 0;'>🚀 Débutant</h2>
-                <p style='font-size: 24px; margin: 10px 0;'>En route vers le premier palier !</p>
+                <p style='font-size: 24px; margin: 10px 0;'>En route !</p>
                 <p style='font-size: 32px; font-weight: bold; margin: 0;'>{ca_actuel:.2f} €</p>
             </div>
             """, unsafe_allow_html=True)
@@ -843,21 +847,20 @@ with tab5:
             <div style='background: linear-gradient(135deg, {palier_suivant['color']}, {palier_suivant['color']}88); 
                         padding: 30px; border-radius: 15px; text-align: center; color: white;'>
                 <h2 style='margin: 0;'>{palier_suivant['nom']}</h2>
-                <p style='font-size: 24px; margin: 10px 0;'>Prochain Objectif</p>
+                <p style='font-size: 24px; margin: 10px 0;'>Prochain</p>
                 <p style='font-size: 32px; font-weight: bold; margin: 0;'>{palier_suivant['montant']:.2f} €</p>
                 <p style='font-size: 18px; margin-top: 10px;'>Plus que {reste:.2f} € !</p>
             </div>
             """, unsafe_allow_html=True)
             
             st.progress(progression / 100)
-            st.caption(f"**{progression:.1f}%** vers {palier_suivant['nom']}")
+            st.caption(f"**{progression:.1f}%**")
         else:
             st.markdown("""
             <div style='background: linear-gradient(135deg, #10b981, #059669); 
                         padding: 30px; border-radius: 15px; text-align: center; color: white;'>
-                <h2 style='margin: 0;'>🏆 MAXIMUM ATTEINT</h2>
+                <h2 style='margin: 0;'>🏆 MAX ATTEINT</h2>
                 <p style='font-size: 24px; margin: 10px 0;'>Félicitations !</p>
-                <p style='font-size: 18px; margin: 0;'>Vous avez atteint le niveau maximum !</p>
             </div>
             """, unsafe_allow_html=True)
     
@@ -869,10 +872,7 @@ with tab5:
         col_p1, col_p2, col_p3 = st.columns([1, 3, 1])
         
         with col_p1:
-            if ca_actuel >= palier['montant']:
-                st.success("✅")
-            else:
-                st.info("⏳")
+            st.success("✅") if ca_actuel >= palier['montant'] else st.info("⏳")
         
         with col_p2:
             progression_palier = min((ca_actuel / palier['montant'] * 100), 100)
@@ -881,10 +881,9 @@ with tab5:
         
         with col_p3:
             if ca_actuel >= palier['montant']:
-                st.write("🎉 Atteint")
+                st.write("🎉")
             else:
-                reste_palier = palier['montant'] - ca_actuel
-                st.write(f"{reste_palier:.0f} €")
+                st.write(f"{palier['montant'] - ca_actuel:.0f} €")
 
 # ========== TAB 6 : DONNÉES ==========
 with tab6:
@@ -894,63 +893,69 @@ with tab6:
     
     with col_del1:
         if st.session_state.delete_mode:
-            st.warning("⚠️ Mode suppression activé - Sélectionnez les lignes à supprimer")
+            st.warning("⚠️ Mode suppression actif")
     
     with col_del2:
-        if st.button(
-            "🗑️ Mode Suppression" if not st.session_state.delete_mode else "❌ Annuler",
-            use_container_width=True
-        ):
+        if st.button("🗑️ Supprimer" if not st.session_state.delete_mode else "❌ Annuler", use_container_width=True):
             st.session_state.delete_mode = not st.session_state.delete_mode
-            st.session_state.rows_to_delete = []
             st.rerun()
     
     if not df.empty:
         if st.session_state.delete_mode:
-            selected_rows = st.multiselect(
-                "Sélectionnez les opérations à supprimer",
-                options=df.index.tolist(),
-                format_func=lambda x: f"{df.loc[x, 'Date'].strftime('%d/%m/%Y')} - {df.loc[x, 'Description']} - {df.loc[x, 'Montant_Gain'] if df.loc[x, 'Montant_Gain'] > 0 else -df.loc[x, 'Montant_Depense']:.2f} €"
-            )
+            selected_rows = st.multiselect("Sélectionnez", options=df.index.tolist(),
+                format_func=lambda x: f"{df.loc[x, 'Date'].strftime('%d/%m/%Y')} - {df.loc[x, 'Description']} - {df.loc[x, 'Montant_Gain'] if df.loc[x, 'Montant_Gain'] > 0 else -df.loc[x, 'Montant_Depense']:.2f} €")
             
             if selected_rows:
-                if st.button("🗑️ Supprimer les lignes sélectionnées", type="primary"):
+                if st.button("🗑️ Supprimer sélection", type="primary"):
                     st.session_state.data = st.session_state.data.drop(selected_rows).reset_index(drop=True)
                     
                     if save_data(st.session_state.data):
-                        st.success(f"✅ {len(selected_rows)} ligne(s) supprimée(s)")
+                        st.success(f"✅ {len(selected_rows)} supprimée(s)")
                         st.session_state.delete_mode = False
                         st.rerun()
         
-        st.dataframe(
-            df,
-            column_config={
-                "Date": st.column_config.DateColumn("Date", format="DD/MM/YYYY"),
-                "Montant_Gain": st.column_config.NumberColumn("Gain", format="%.2f €"),
-                "Montant_Depense": st.column_config.NumberColumn("Dépense", format="%.2f €"),
-                "Montant_Rembourse_Julie": st.column_config.NumberColumn("Remb. Julie", format="%.2f €"),
-                "Date_Remb_Complete_Julie": st.column_config.DateColumn("Date Remb.", format="DD/MM/YYYY"),
-            },
-            use_container_width=True,
-            hide_index=True
-        )
+        st.dataframe(df, column_config={
+            "Date": st.column_config.DateColumn("Date", format="DD/MM/YYYY"),
+            "Montant_Gain": st.column_config.NumberColumn("Gain", format="%.2f €"),
+            "Montant_Depense": st.column_config.NumberColumn("Dépense", format="%.2f €"),
+            "Montant_Rembourse_Julie": st.column_config.NumberColumn("Remb. Julie", format="%.2f €"),
+            "Date_Remb_Complete_Julie": st.column_config.DateColumn("Date Remb.", format="DD/MM/YYYY"),
+        }, use_container_width=True, hide_index=True)
         
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            "📥 Télécharger les données (CSV)",
-            csv,
-            "whatnot_data.csv",
-            "text/csv",
-            key='download-csv'
-        )
+        # Exports
+        st.markdown("### 📥 Exports")
+        col_exp1, col_exp2, col_exp3 = st.columns(3)
+        
+        with col_exp1:
+            csv = df.to_csv(index=False).encode('utf-8')
+            st.download_button("📥 CSV", csv, "whatnot_data.csv", "text/csv")
+        
+        with col_exp2:
+            # Export Excel
+            try:
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False, sheet_name='Données')
+                    
+                    # Feuille métriques
+                    metriques_df = pd.DataFrame([metriques])
+                    metriques_df.to_excel(writer, index=False, sheet_name='Métriques')
+                
+                st.download_button("📥 Excel", output.getvalue(), "whatnot_data.xlsx",
+                                  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            except:
+                st.warning("Excel non disponible")
+        
+        with col_exp3:
+            st.info("PDF bientôt disponible")
     else:
-        st.info("Aucune donnée à afficher")
+        st.info("Aucune donnée")
 
 # --- FOOTER ---
 st.divider()
-st.markdown("""
+st.markdown(f"""
 <div style='text-align: center; color: #6b7280; padding: 20px;'>
-    <p>💎 MJTGC Whatnot Tracker Pro V2 - Gestion Professionnelle de Vos Lives</p>
-    <p style='font-size: 12px;'>Dernière mise à jour : {}</p>
+    <p>💎 MJTGC Whatnot Tracker Pro V2 - Version Améliorée</p>
+    <p style='font-size: 12px;'>Dernière màj : {datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
 </div>
-""".format(datetime.now().strftime('%d/%m/%Y %H:%M')), unsafe_allow_html=True)
+""", unsafe_allow_html=True)
